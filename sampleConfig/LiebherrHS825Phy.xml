@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<phyVehicleDef xmlns="http://www.simsoft.com.tr/AdvanceVehicleSchema" xmlns:xsi="http://www.simsoft.com.tr/AttributeTypes">
+	<vehicles>
+		<vehicle name="myBody">
+			<type value="2"/>
+			<mass value="3200"/>
+			<centerOfMass x="0.0" y="1.0" z="-0.03"/>
+			<materialProps kineticFriction="0.20000000" restitution="0.00000000" staticFriction="0.30000001"/>
+			<dampingProps angular="0.2" linear="0.005" />
+			<aerodynamicMultiplier>000.00000000</aerodynamicMultiplier>
+			<solverIterationCount>100</solverIterationCount>
+			<physicalMeshType value="convex" />
+			<bodyParts>
+				<!-- PERF DENEY B (GECICI): asil alt_govde.fbx (Model/FBX/, 6.3 MB high-poly
+				     gorsel mesh) yerine PR736 dozer'in Fizik/ klasorundeki manuel
+				     authored low-poly fizik mesh'i (384 KB) kullaniliyor. Hipotez:
+				     dragline chassis-vs-deformableHF spike'i, alt_govde.fbx'ten cook
+				     edilen yuksek-vertex convex hull'unun PhysX 4.1 NP'sinde HF
+				     triangle'lariyla patolojik etkilesmesinden geliyor. Dozer'in
+				     low-poly fizik mesh'ine swap edersek spike kalkmali.
+				     Gecici: kovrenli HS825 mesh'i gorsel olarak yer almaz (sasi
+				     ucuren bir dozer mesh'i goruyor olabilirsin) ama bu deney
+				     tanisal amac icin. Sonra: HS825 icin uygun bir Fizik/alt_govde.fbx
+				     uretilmeli (D: source-of-truth uzerinden 3D yazilim ile). -->
+				<entry value="./Contents/Vehicles/Land/liebherr_buldozer_736/Fizik/lebherr_govde.fbx"/>
+				<!-- Orijinal (post-deney bunu geri ac):
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Model/FBX/alt_govde.fbx"/>
+				-->
+			</bodyParts>
+		</vehicle>
+	</vehicles>
+	<bodies>
+		<body name="MainBody">
+			<mass value="10"/>
+			<centerOfMass x="0" y="0" z="0.0"/>
+			<relativePosition x="0" y="0" z="0"/>
+			<relativeRotation x="0" y="0" z="0"/>
+			<materialProps kineticFriction="0.2" staticFriction="0.3" restitution="0.0"/>
+			<dampingProps angular="0.2" linear="0.005" />
+			<aerodynamicMultiplier>00</aerodynamicMultiplier>
+			<solverIterationCount>100</solverIterationCount>
+			<collisionFilter word0="COLLISION_FLAG_NON_COLLIDABLE" word1="COLLISION_FLAG_NON_COLLIDABLE_AGAINST"/>
+			<queryFilter word3="NON_DRIVABLE_SURFACE"/>
+			<physicalMeshType value="convex" />
+			<bodyParts>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Model/FBX/govde.fbx"/>
+			</bodyParts>
+		</body>
+		<body name="BoomBody">
+			<mass value="10"/>
+			<centerOfMass x="0" y="0" z="0.0"/>
+			<relativePosition x="0.118" y="1.552" z="1.386"/>
+			<relativeRotation x="0" y="0" z="0"/>
+			<materialProps kineticFriction="0.2" staticFriction="0.3" restitution="0.0"/>
+			<dampingProps angular="0.2" linear="0.005" />
+			<aerodynamicMultiplier>00</aerodynamicMultiplier>
+			<solverIterationCount>100</solverIterationCount>
+			<!-- E2 (2026-09-04, tur 3): kova ve halatlar boom kafesinin ICINDEN geciyordu.
+			     BoomBody PhysX govdesi ZATEN vardi (convex, govde_kol.fbx, 20.86 x 17.02 x 1.50 m)
+			     ve DraglineUpperworksActuator her tick KinematicPart::apply -> setPose ile suruyor;
+			     ama filtresi NON_COLLIDABLE / NON_COLLIDABLE_AGAINST (word1 = 0) oldugu icin
+			     PhyCore CollisionFilterShader (PhyScene.cpp:66..90; cift carpisir ANCAK
+			     word0_A & word1_B veya word0_B & word1_A ise) BUTUN ciftleri eliyordu.
+			     YENI filtre: word0 = NON_COLLIDABLE (bit 0; hicbir *_AGAINST maskesinde
+			     bulunmaz, yani boom kendiliginden hicbir seye carpmaz), word1 = SELF_CONDUCTIVE
+			     (bit 8). Boylece boom ile YALNIZ word0 = SELF_CONDUCTIVE olan govdeler carpisir:
+			     BucketBody ve DraglineBlade. Arazi (word0 = TERRAIN bit 1) ve toprak parcaciklari
+			     (word0 = PARTICLE bit 6) word1 ile eslesmez, ayrica TERRAIN_AGAINST ve
+			     PARTICLE_AGAINST maskelerinde bit 0 yok  ->  boom araziye ve topraga CARPMAZ.
+			     Rig kureleri (yoke / spreader / dumpBlock / socket; RigBackend::makeSmallBody
+			     word0 = ENVIRONMENT_OBJECT bit 5, word1 = TERRAIN) de eslesmez  ->  halat
+			     dugumleri boma takilmaz. Bu BILEREK boyle: dumpBlock zaten boom ucunun
+			     dibinde calisir, onu boma carpistirmak rig cozumunu kilitler.
+			     NOT: tasarimda word0 icin EXCAVATOR_SPECIAL onerilmisti; PhyUtil::getCollisionFilter
+			     (PhyUtil.cpp:546..622) o dizgiyi TANIMIYOR ve sessizce NON_COLLIDABLE dondururdu,
+			     yani ayni sayi ama gizli. Ustelik EXCAVATOR_SPECIAL, ENVIRONMENT_OBJECT_AGAINST ve
+			     TUMSEK_OBJECT_AGAINST maskelerinde bulundugu icin bomu istemeden dunyadaki
+			     env-object ve tumsek govdelerine de carptirirdi. Niyet aciga yazildi. -->
+			<collisionFilter word0="COLLISION_FLAG_NON_COLLIDABLE" word1="COLLISION_FLAG_SELF_CONDUCTIVE"/>
+			<queryFilter word3="NON_DRIVABLE_SURFACE"/>
+			<physicalMeshType value="convex" />
+			<bodyParts>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Model/FBX/govde_kol.fbx"/>
+			</bodyParts>
+		</body>
+		<!-- ============================================================
+		     Step 3 (dragline kinematik rigging): kova + uctaki kesici/deforme
+		     edici blade KINEMATIK govde. KinematicTankActuator tum <bodies>'i
+		     yukler + kinematik yapar; DraglineActuator solver poziyla apply eder
+		     (PhyDelayedExec, MT-guvenli). SimIG: BucketBody->BucketBodyPose
+		     (12983), DraglineBlade gorselsiz (DraglineBladeBodyPose).
+		     BucketTop/Bottom (12984/12985) Phy.xml'de DEGIL -> pure SR Mat44
+		     (mesh'leri Model/FBX high-poly; cook etme = §13.1 spike kacin).
+		     relativePosition = ilk spawn; apply() her tick override eder.
+		     Terrain deform mantigi Step 4: DraglineBlade SELF_CONDUCTIVE + isim
+		     "DraglineBlade" (terrain mtDragline eslesmesi) + deform-attr tasir;
+		     DragPullForce/RopeHorizontalInput=0 oldugundan deform GATE kapali. -->
+		<body name="BucketBody">
+			<mass value="10"/>
+			<centerOfMass x="0" y="0" z="0.0"/>
+			<relativePosition x="0" y="2.7" z="15.8"/>
+			<relativeRotation x="0" y="0" z="0"/>
+			<materialProps kineticFriction="0.2" staticFriction="0.3" restitution="0.0"/>
+			<dampingProps angular="0.2" linear="0.005" />
+			<aerodynamicMultiplier>00</aerodynamicMultiplier>
+			<solverIterationCount>100</solverIterationCount>
+			<!-- COLLIDABLE (eski kova fizik yapisi): 7 convex part terrain ile temas uretir ->
+			     DraglineActuator kovayi KENDI govde temaslariyla yere oturtur (egimli zeminde
+			     on/arka ayri yukseklige). Kinematik kalir (joint yok; actuator apply surer).
+			     canDeform KODDA acilmaz -> kabuk arazi DEFORME ETMEZ, yalniz temas verir
+			     (deformu yalniz DraglineBlade yapar). SELF_CONDUCTIVE = blade ile ayni;
+			     karsilikli blade<->kabuk temaslari listener'da dt_ filtresiyle elenir. -->
+			<collisionFilter word0="COLLISION_FLAG_SELF_CONDUCTIVE" word1="COLLISION_FLAG_SELF_CONDUCTIVE_AGAINST"/>
+			<queryFilter word3="NON_DRIVABLE_SURFACE"/>
+			<physicalMeshType value="convex" />
+			<bodyParts>
+				<!-- 2026-10-02: dsimcontents b8304540 (modelci) DETAYLI kova fizik kabugu, 11 -> 31 konveks parca: alt 0-8
+				     (taban + agiz kenari), sag/sol yan duvar, ust kemer 1-6, yan kulak/trunnion parcalari sag/sol. Gorselle ortusme
+				     (yan/on/ust yalniz fizik %): eski 13/12/5 -> yeni 9/8/2; yalniz gorsel eski 4/12/21 -> yeni 1/3/14.
+				     konvoy docs/Dsim/LiebherrHS825/tools/render_bucket_phys_vs_visual_blender.py + make_phys_vis_compare.py -->
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_0.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_1.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_2.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_3.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_4.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_5.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_6.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_7.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_alt_fizik_8.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_sag_fizik.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_sol_fizik.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_1.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_2.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_3.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_4.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_5.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_part_ust_fizik_6.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_001.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_002.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_003.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_004.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_005.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sag_006.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_002.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_003.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_004.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_005.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_006.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_007.fbx"/>
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_parts_sol_008.fbx"/>
+			</bodyParts>
+		</body>
+		<body name="DraglineBlade">
+			<mass value="10"/>
+			<centerOfMass x="0" y="0" z="0.0"/>
+			<relativePosition x="0" y="2.7" z="15.8"/>
+			<relativeRotation x="0" y="0" z="0"/>
+			<materialProps kineticFriction="0.2" staticFriction="0.3" restitution="0.0"/>
+			<dampingProps angular="1.0" linear="1.0" />
+			<aerodynamicMultiplier>00</aerodynamicMultiplier>
+			<solverIterationCount>128</solverIterationCount>
+			<collisionFilter word0="COLLISION_FLAG_SELF_CONDUCTIVE" word1="COLLISION_FLAG_SELF_CONDUCTIVE_AGAINST"/>
+			<queryFilter word3="NON_DRIVABLE_SURFACE"/>
+			<physicalMeshType value="convex" />
+			<bodyParts>
+				<!-- shapeIndex + deformationResistanceCoefficient: Step 4 terrain
+				     deform tuning'i (su an deform gate kapali). shapeIndex dozer
+				     bicak (51-54) / hamut (2) disinda distinct deger. -->
+				<entry value="./Contents/Vehicles/Land/Liebherr_HS825/Fizik/kepce_bicak_fizik.fbx" deformationResistanceCoefficient="1" destructionResistanceCoefficient="1" shapeIndex="60"/>
+			</bodyParts>
+		</body>
+	</bodies>
+	<engine>
+		<torqueCurve>
+			<entry mapFrom="0.00000000" mapTo="1600.00000000"/>
+			<entry mapFrom="900.00000000" mapTo="1600.00000000"/>
+			<entry mapFrom="1100.00000000" mapTo="750.00000000"/>
+			<entry mapFrom="1800.00000000" mapTo="750.00000000"/>
+			<entry mapFrom="2750.00000000" mapTo="1200.00000000"/>
+			<entry mapFrom="3000.00000000" mapTo="1000.00000000"/>
+		</torqueCurve>
+		<momentOfInertia value="6.0000000"/>
+		<starterMotor rpm="100.00000000"/>
+		<dampingRateFullThrottle value="30.000000"/>
+		<dampingRateZeroThrottleClutchDisengaged value="6.0"/>
+		<dampingRateZeroThrottleClutchEngaged value="30.0"/>
+		<electronicPowerControl enabled="true">
+			<targetIdleEngineRPM value="100.00000000"/>
+			<maxRPMTreshold value="1600.00000000"/>
+			<idleThrottle value="0.0200000"/>
+			<idleControlProportionalGain value="0.000012"/>
+			<idleControlDerivativeGain value="0.000030"/>
+			<idleControlPIDSaturation value="0.250"/>
+		</electronicPowerControl>
+	</engine>
+	<wheels>
+		<frictionFunctionDefinitions>
+			<frictionFunctionDefinition surfaceType="Default">
+				<tire lateralStiffnessX="2800" lateralStiffnessY="2800" longitudinalStiffnessPerUnitGravity="2800"/>
+				<frictionCurve p0="0.0" p1="0.5" p2="0.1" p3="0.5" p4="0.15" p5="0.5"/>
+				<applyWhenSnowy>Snow</applyWhenSnowy>
+				<applyWhenRainy>Wet</applyWhenRainy>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Asphalt">
+				<tire lateralStiffnessX="0.2" lateralStiffnessY="15" longitudinalStiffnessPerUnitGravity="2800"/>
+				<frictionCurve p0="0.0" p1="2.0" p2="0.1" p3="2.0" p4="0.15" p5="0.4"/>
+				<applyWhenSnowy>Snow</applyWhenSnowy>
+				<applyWhenRainy>Wet</applyWhenRainy>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Gravel">
+				<tire lateralStiffnessX="1.0" lateralStiffnessY="7" longitudinalStiffnessPerUnitGravity="800"/>
+				<frictionCurve p0="0.0" p1="2.0" p2="0.1" p3="2.0" p4="0.15" p5="0.4"/>
+				<applyWhenSnowy>Snow</applyWhenSnowy>
+				<applyWhenRainy>Wet</applyWhenRainy>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Sand">
+				<tire lateralStiffnessX="0.2" lateralStiffnessY="2" longitudinalStiffnessPerUnitGravity="2000"/>
+				<frictionCurve p0="0.0" p1="2.0" p2="0.1" p3="2.0" p4="0.15" p5="1.4"/>
+				<applyWhenSnowy>Snow</applyWhenSnowy>
+				<applyWhenRainy>Wet</applyWhenRainy>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Wet">
+				<tire lateralStiffnessX="2800" lateralStiffnessY="2800" longitudinalStiffnessPerUnitGravity="2800"/>
+				<frictionCurve p0="0.0" p1="0.25" p2="0.1" p3="0.25" p4="0.15" p5="0.25"/>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Snow">
+				<tire lateralStiffnessX="2800" lateralStiffnessY="2800" longitudinalStiffnessPerUnitGravity="2800"/>
+				<frictionCurve p0="0.0" p1="0.20" p2="0.1" p3="0.20" p4="0.15" p5="0.20"/>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Damper">
+				<tire lateralStiffnessX="7" lateralStiffnessY="15" longitudinalStiffnessPerUnitGravity="1400"/>
+				<frictionCurve p0="0.0" p1="0.5" p2="0.1" p3="0.5" p4="0.15" p5="0.5"/>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Sand">
+				<tire lateralStiffnessX="0.2" lateralStiffnessY="15" longitudinalStiffnessPerUnitGravity="2800"/>
+				<frictionCurve p0="0.0" p1="2.0" p2="0.1" p3="2.0" p4="0.15" p5="0.4"/>
+			</frictionFunctionDefinition>
+			<frictionFunctionDefinition surfaceType="Mud">
+				<tire lateralStiffnessX="4.0" lateralStiffnessY="1.5" longitudinalStiffnessPerUnitGravity="700"/>
+				<frictionCurve p0="0.0" p1="2.0" p2="0.1" p3="2.0" p4="0.15" p5="0.3"/>
+			</frictionFunctionDefinition>
+		</frictionFunctionDefinitions>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-left-0">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="-1.4" y="0.53" z="2.2"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-right-0">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="1.4" y="0.53" z="2.2"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-left-1">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="-1.4" y="0.53" z="0.73"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-right-1">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="1.4" y="0.53" z="0.73"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-left-2">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="-1.4" y="0.53" z="-0.74"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-right-2">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="1.4" y="0.53" z="-0.74"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-left-3">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="-1.4" y="0.53" z="-2.2"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+		<wheel attachedToBody="myBody" powered="true" wheelName="wheel-right-3">
+			<wheelPart value="./Contents/Vehicles/Land/liebherr_buldozer_754/Model/FBX/teker.fbx"/>
+			<suspension damping="23000" strength="55000" maxDroop="0.1" maxCompression="0.3" smoothSuspensionThreshold="0.1" smoothSuspensionMultiplier="0.1" appliedForceMultiplier="0.001"/>
+			<position x="1.4" y="0.53" z="-2.2"/>
+			<forcePositionOffset value="0.1"/>
+			<maxSteerAngle value="40" />
+			<mass value="25.00000000"/>
+			<maxBrakeTorque value="1600.0"/>
+			<maxHandbrakeTorque value="0.00000000"/>
+			<subStepCount velocityThreshold="10" lowSpeedStep="30" highSpeedStep="5"/>
+		</wheel>
+	</wheels>
+	<gearBox>
+		<differentialRatioH value="1.0"/>
+		<differentialType value="3"/>
+		<forwardGearRatios>
+			<entry first="21.61500001" second="0.00000000"/>
+			<entry first="2.04500008" second="0.00000000"/>
+			<entry first="1.37000000" second="0.00000000"/>
+			<entry first="1.03600001" second="0.00000000"/>
+			<entry first="0.83899999" second="0.00000000"/>
+		</forwardGearRatios>
+		<backwardGearRatios>
+			<entry first="21.61500001" second="0.00000000"/>
+		</backwardGearRatios>
+	</gearBox>
+	<clutch>
+		<clutchCurve>
+			<entry mapFrom="0.00000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.20000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.60000000" mapTo="0.95000000"/>
+			<entry mapFrom="0.80000000" mapTo="1.00000000"/>
+			<entry mapFrom="1.00000000" mapTo="1.00000000"/>
+		</clutchCurve>
+		<clutchFrictionConstant value="800.00000000"/>
+	</clutch>
+	<brake>
+		<brakePedalCurve>
+			<entry mapFrom="0.00000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.50000000" mapTo="0.80000000"/>
+			<entry mapFrom="0.90000000" mapTo="1.00000000"/>
+			<entry mapFrom="1.00000000" mapTo="1.00000000"/>
+		</brakePedalCurve>
+	</brake>
+	<throttle>
+		<throttlePedalCurve>
+			<entry mapFrom="0.00000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.50000000" mapTo="0.80000000"/>
+			<entry mapFrom="0.90000000" mapTo="1.00000000"/>
+			<entry mapFrom="1.00000000" mapTo="1.00000000"/>
+		</throttlePedalCurve>
+	</throttle>
+	<handbrake>
+		<handbrakeCurve>
+			<entry mapFrom="0.00000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.20000000" mapTo="0.00000000"/>
+			<entry mapFrom="0.50000000" mapTo="0.50000000"/>
+			<entry mapFrom="0.80000000" mapTo="1.00000000"/>
+			<entry mapFrom="1.00000000" mapTo="1.00000000"/>
+		</handbrakeCurve>
+	</handbrake>
+	<fuelConsumptionCurve>
+		<entry mapFrom="0.00000000" mapTo="0.00000000"/>
+		<entry mapFrom="7000.00000000" mapTo="75.00000000"/>
+	</fuelConsumptionCurve>
+	<fuelCapacity value="650.00000000"/>
+	<steeringWheel>
+		<SpeedVsSteeringForceCurve>
+			<entry mapFrom="0" mapTo="0"/>
+			<entry mapFrom="1" mapTo="0.15"/>
+			<entry mapFrom="1.3" mapTo="0.3"/>
+			<entry mapFrom="1.75" mapTo="0.4"/>
+			<entry mapFrom="2.5" mapTo="0.5"/>
+			<entry mapFrom="5" mapTo="0.6"/>
+			<entry mapFrom="10" mapTo="0.7"/>
+			<entry mapFrom="25" mapTo="0.8"/>
+			<entry mapFrom="50" mapTo="0.9"/>
+			<entry mapFrom="100" mapTo="1.0"/>
+			<entry mapFrom="200" mapTo="1.0"/>
+		</SpeedVsSteeringForceCurve>
+		<SpeedVsDampingForceCurve>
+			<entry mapFrom="0" mapTo="0"/>
+			<entry mapFrom="1" mapTo="0.55"/>
+			<entry mapFrom="1.3" mapTo="0.5"/>
+			<entry mapFrom="1.75" mapTo="0.45"/>
+			<entry mapFrom="2.5" mapTo="0.4"/>
+			<entry mapFrom="5" mapTo="0.35"/>
+			<entry mapFrom="10" mapTo="0.3"/>
+			<entry mapFrom="25" mapTo="0.3"/>
+			<entry mapFrom="200" mapTo="0.3"/>
+		</SpeedVsDampingForceCurve>
+	</steeringWheel>
+</phyVehicleDef>

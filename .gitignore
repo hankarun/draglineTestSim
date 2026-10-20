@@ -1,0 +1,14 @@
+# build output
+build/
+out/
+
+# IDE / tooling
+.vs/
+.vscode/
+.idea/
+.cache/
+*.user
+CMakeUserPresets.json
+
+# third-party SDK (prebuilt, ~460 MB): download PhysX 4.1.2 into PhysX-4.1.2/ (see CMakeLists.txt)
+PhysX-4.1.2/
