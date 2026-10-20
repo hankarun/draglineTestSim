@@ -13,6 +13,8 @@ struct HoistDrumParams
     float motorForce    = 90000.0f;  // N, max motor line pull
     float motorGain     = 40000.0f;  // N per m/s of speed error
     float maxSpeed      = 2.0f;      // m/s, line speed at full lever
+    float maxAccel      = 1.0f;      // m/s^2, commanded line speed ramp (real winches take 1-2 s to full speed)
+    float stopSpeed     = 0.02f;     // m/s, lever neutral: the holding brake sets once the drum is this slow
     float friction      = 1500.0f;   // N, bearing / gear friction, always present
     float holdBrake     = 80000.0f;  // N, spring-applied holding brake (powered mode, lever neutral)
     float freeFallBrake = 80000.0f;  // N, operator brake at full pedal (free-fall mode)
@@ -45,16 +47,19 @@ public:
         {
             resist += std::clamp(in.brake, 0.0f, 1.0f) * p_.freeFallBrake;
         }
-        else if (std::fabs(in.lever) < 1e-3f)
+        else if (std::fabs(in.lever) < 1e-3f && vRef_ == 0.0f && std::fabs(speed_) < p_.stopSpeed)
         {
             holding_ = true;
             resist += p_.holdBrake;
         }
         else
         {
-            // speed servo with load feed-forward
-            const float vCmd = std::clamp(in.lever, -1.0f, 1.0f) * p_.maxSpeed;
-            motorOut_ = std::clamp(p_.motorGain * (vCmd - speed_) - loadForce, -p_.motorForce, p_.motorForce);
+            // speed servo with load feed-forward, tracking a ramped reference: lever moves and lever
+            // release both change line speed at maxAccel instead of jerking the rigging
+            const float vCmd = std::fabs(in.lever) < 1e-3f ? 0.0f : std::clamp(in.lever, -1.0f, 1.0f) * p_.maxSpeed;
+            const float dv   = p_.maxAccel * dt;
+            vRef_            = std::clamp(vCmd, vRef_ - dv, vRef_ + dv);
+            motorOut_ = std::clamp(p_.motorGain * (vRef_ - speed_) - loadForce, -p_.motorForce, p_.motorForce);
             drive += motorOut_;
         }
 
@@ -72,13 +77,16 @@ public:
         {
             payout_ = std::clamp(payout_, p_.minPayout, p_.maxPayout);
             speed_  = 0.0f;
+            vRef_   = 0.0f; // no wind-up against the limit
         }
+        if (in.freeFall) vRef_ = speed_; // re-engaging the motor starts from the current speed
     }
 
     void reset(float payout)
     {
         payout_ = payout;
         speed_  = 0.0f;
+        vRef_   = 0.0f;
     }
 
     float payout() const { return payout_; }
@@ -94,6 +102,7 @@ private:
     HoistDrumParams p_;
     float payout_   = 0.0f;
     float speed_    = 0.0f;
+    float vRef_     = 0.0f; // ramped speed command
     float motorOut_ = 0.0f;
     bool  holding_  = false;
 };

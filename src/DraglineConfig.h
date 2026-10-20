@@ -100,8 +100,8 @@ constexpr float        kChainTwistLimit    = 0.3f;  // rad, per link-to-link joi
 constexpr float        kChainJointFriction = 0.05f; // articulation joint friction coefficient
 // direct model: link-to-link friction as a rotational damper per joint. Without it a slack chain
 // loop swings freely for many seconds (no contacts involved); 5 settles it but the links still
-// flick about like a light rope. 80 (link time constant I/d ~ 0.06 s) reads as heavy chain.
-constexpr double       kChainJointDamping  = 80.0;  // N m s/rad
+// flick about like a light rope. 150 reads as stiff, heavy chain.
+constexpr double       kChainJointDamping  = 150.0;  // N m s/rad
 // direct model: per-link body damping (1/s). Heavier than the rest of the rig so links lag and
 // drape instead of whipping; linear stays well under g/v for any swing speed we see.
 constexpr double       kChainLinkLinDamping = 0.5;

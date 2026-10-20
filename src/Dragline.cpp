@@ -83,6 +83,7 @@ HoistDrumParams Dragline::dragParams()
     p.motorForce = 200000.0f;
     p.motorGain  = 80000.0f;
     p.maxSpeed   = 2.5f;
+    p.maxAccel   = 1.25f; // 2 s to full speed, like the hoist
     p.holdBrake  = 200000.0f;
     p.minPayout  = cfg::kDragLenMin;
     p.maxPayout  = cfg::kDragLenMax;
