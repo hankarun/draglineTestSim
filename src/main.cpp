@@ -1,4 +1,5 @@
 ﻿#include "Dragline.h"
+#include "Recording.h"
 #include "Renderer.h"
 
 #include <raylib.h>
@@ -7,6 +8,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <string>
 
 using namespace physx;
 
@@ -52,6 +56,28 @@ float axis(int positiveKey, int negativeKey)
 {
     return (IsKeyDown(positiveKey) ? 1.0f : 0.0f) - (IsKeyDown(negativeKey) ? 1.0f : 0.0f);
 }
+
+// Horizontal slider, dragged with the left mouse button. Returns true while it is being dragged.
+bool slider(int id, Rectangle track, const char* label, float& value, float lo, float hi)
+{
+    static int      grabbed = -1; // a press on a track grabs that slider until the button is released
+    const Vector2   mouse   = GetMousePosition();
+    const Rectangle hit{track.x - 8.0f, track.y - 8.0f, track.width + 16.0f, track.height + 16.0f};
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, hit)) grabbed = id;
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) grabbed = -1;
+    const bool dragging = grabbed == id;
+    if (dragging) value = lo + std::clamp((mouse.x - track.x) / track.width, 0.0f, 1.0f) * (hi - lo);
+
+    const float t    = (value - lo) / (hi - lo);
+    const float knob = track.x + t * track.width;
+    DrawText(label, static_cast<int>(track.x) + 1, static_cast<int>(track.y) - 21, 18, BLACK);
+    DrawText(label, static_cast<int>(track.x), static_cast<int>(track.y) - 22, 18, RAYWHITE);
+    DrawRectangleRec(track, Color{40, 40, 40, 200});
+    DrawRectangleRec(Rectangle{track.x, track.y, knob - track.x, track.height}, Color{240, 200, 80, 255});
+    DrawRectangle(static_cast<int>(knob) - 5, static_cast<int>(track.y) - 5, 10, static_cast<int>(track.height) + 10,
+                  dragging ? YELLOW : RAYWHITE);
+    return dragging;
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -80,11 +106,27 @@ int main(int argc, char** argv)
     float       accumulator = 0.0f;
     bool        paused      = false;
     bool        freeFall    = false;
+    // sliders: max drum pulls and swing speed
+    float       dragPullKN  = dragline.dragDrum().params().motorForce / 1000.0f;
+    float       hoistPullKN = dragline.drum().params().motorForce / 1000.0f;
+    float       swingRpm    = dragline.swingMaxRate() * 60.0f / (2.0f * PI);
+    // input recording since the last reset; [F9] or the REC button saves it (replay: dragline_selftest replay <file>)
+    rec::Recording recording;
+    recording.model = model;
+    recording.dt    = kFixedDt;
+    std::string savedMsg;
+    float       savedMsgTime = 0.0f;
 
     while (!WindowShouldClose())
     {
         // --- input ---
-        if (IsKeyPressed(KEY_R)) { dragline.reset(); accumulator = 0.0f; freeFall = false; }
+        if (IsKeyPressed(KEY_R))
+        {
+            dragline.reset();
+            accumulator = 0.0f;
+            freeFall    = false;
+            recording.steps.clear();
+        }
         if (IsKeyPressed(KEY_P)) paused = !paused;
         if (IsKeyPressed(KEY_F)) freeFall = !freeFall;
         orbit.update();
@@ -103,6 +145,7 @@ int main(int argc, char** argv)
             accumulator = std::min(accumulator, kFixedDt * kMaxSubSteps);
             while (accumulator >= kFixedDt)
             {
+                recording.steps.push_back({controls, swingRpm, hoistPullKN, dragPullKN});
                 dragline.step(controls, kFixedDt);
                 accumulator -= kFixedDt;
             }
@@ -140,9 +183,9 @@ int main(int argc, char** argv)
         if (dragline.hasDrag())
         {
             const HoistDrum& dragDrum = dragline.dragDrum();
-            line(TextFormat("drag    payout %6.2f m   line speed %+5.2f m/s   %s   tension %6.1f kN", dragDrum.payout(),
-                            dragDrum.speed(), dragline.dragRopeTaut() ? "TAUT " : "SLACK",
-                            dragline.dragTension() / 1000.0f),
+            line(TextFormat("drag    payout %6.2f m   line speed %+5.2f m/s   %s   tension %6.1f kN   motor %6.1f kN",
+                            dragDrum.payout(), dragDrum.speed(), dragline.dragRopeTaut() ? "TAUT " : "SLACK",
+                            dragline.dragTension() / 1000.0f, -dragDrum.motorForce() / 1000.0f),
                  dragline.dragRopeTaut() ? RAYWHITE : ORANGE);
             line(TextFormat("chains  drag L %s R %s", chainState(Dragline::DragL), chainState(Dragline::DragR)));
         }
@@ -153,6 +196,40 @@ int main(int argc, char** argv)
                  "[RMB] orbit  "
                  "[wheel] zoom",
                  10, GetScreenHeight() - 28, 18, BLACK);
+        // live tuning sliders, top right
+        const float sliderX = static_cast<float>(GetScreenWidth()) - 340.0f;
+        if (slider(0, {sliderX, 60.0f, 300.0f, 10.0f}, TextFormat("swing speed max %4.2f rpm", swingRpm), swingRpm,
+                   0.2f, 8.0f))
+            dragline.setSwingMaxRate(swingRpm * 2.0f * PI / 60.0f);
+        if (slider(1, {sliderX, 115.0f, 300.0f, 10.0f}, TextFormat("hoist pull max %5.0f kN", hoistPullKN), hoistPullKN,
+                   10.0f, 250.0f))
+            dragline.setHoistMotorForce(hoistPullKN * 1000.0f);
+        if (dragline.hasDrag() &&
+            slider(2, {sliderX, 170.0f, 300.0f, 10.0f}, TextFormat("drag pull max %5.0f kN", dragPullKN), dragPullKN,
+                   10.0f, 250.0f))
+            dragline.setDragMotorForce(dragPullKN * 1000.0f);
+
+        // save the recording: button under the sliders, or F9
+        const Rectangle recButton{sliderX, 200.0f, 300.0f, 32.0f};
+        const bool      overRec = CheckCollisionPointRec(GetMousePosition(), recButton);
+        DrawRectangleRec(recButton, overRec ? Color{200, 40, 40, 255} : Color{160, 30, 30, 230});
+        DrawText(TextFormat("SAVE RECORDING [F9]  (%.0f s)", recording.steps.size() * kFixedDt),
+                 static_cast<int>(recButton.x) + 10, static_cast<int>(recButton.y) + 8, 18, RAYWHITE);
+        if (IsKeyPressed(KEY_F9) || (overRec && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
+        {
+            std::filesystem::create_directories("recordings");
+            const std::time_t now = std::time(nullptr);
+            std::tm           tm{};
+            localtime_s(&tm, &now);
+            char name[64];
+            std::strftime(name, sizeof(name), "recordings/rec_%Y%m%d_%H%M%S.txt", &tm);
+            savedMsg     = rec::save(name, recording, dragline)
+                             ? std::string("saved ") + std::filesystem::absolute(name).string()
+                             : std::string("could not write ") + name;
+            savedMsgTime = static_cast<float>(GetTime());
+        }
+        if (!savedMsg.empty() && GetTime() - savedMsgTime < 6.0)
+            DrawText(savedMsg.c_str(), 10, GetScreenHeight() - 56, 18, YELLOW);
         if (paused) DrawText("PAUSED", GetScreenWidth() - 110, 10, 20, YELLOW);
         DrawFPS(GetScreenWidth() - 100, GetScreenHeight() - 30);
         EndDrawing();

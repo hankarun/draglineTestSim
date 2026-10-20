@@ -57,6 +57,7 @@ PxVec3 hoistPin(float side) { return PxVec3(side * cfg::kHoistPin.x, cfg::kHoist
 PxVec3 mouthLug(float side) { return PxVec3(side * cfg::kMouthLug.x, cfg::kMouthLug.y, cfg::kMouthLug.z); }
 PxVec3 socketChainEye(float side) { return PxVec3(side * cfg::kDragSocketEyeHalfW, 0.0f, 0.0f); }
 PxVec3 socketRopeEye() { return PxVec3(0.0f, 0.0f, -cfg::kDragSocketHalf.z); }
+float  carryPitch() { return cfg::kCarryPitchDeg / cfg::kRadToDeg; }
 
 // link i of a straight chain of links of length l from a toward b; link-local +X points a -> b
 PxTransform straightLinkPose(const PxVec3& a, const PxVec3& b, float l, int i)
@@ -391,8 +392,9 @@ Dragline::RigPoses Dragline::hangingPoses() const
     // slack from the mouth lugs instead, its weight would tip the bucket mouth-down into the ground.)
     const PxVec3 pinAxis(0.0f, cfg::kHoistPin.y, cfg::kHoistPin.z);
     const PxVec3 lugAxis(0.0f, cfg::kMouthLug.y, cfg::kMouthLug.z);
+    // With the dump rope (direct model) it spawns in the carry attitude the dump rope is sized for.
     const PxVec3 com   = bucket_->getCMassLocalPose().p - pinAxis;
-    const float  pitch = PxPi - std::atan2(com.z, com.y); // rotate (y,z) so com points to -y
+    const float  pitch = hasDrag() ? carryPitch() : PxPi - std::atan2(com.z, com.y); // rotate (y,z) so com points to -y
     const PxQuat bucketQ = yaw * PxQuat(pitch, PxVec3(1.0f, 0.0f, 0.0f));
     const PxVec3 pinTarget = spreaderC - PxVec3(0.0f, cfg::kLowerChainLen, 0.0f);
     const PxVec3 bucketO   = pinTarget - bucketQ.rotate(pinAxis);
@@ -400,14 +402,19 @@ Dragline::RigPoses Dragline::hangingPoses() const
     // socket out from the lug axis toward the fairlead, the drag chains converging on its side eyes
     // and its rope eye (-Z) facing the fairlead
     const PxVec3 lugW     = PxTransform(bucketO, bucketQ).transform(lugAxis);
-    const PxVec3 toFair   = (housePose().transform(cfg::kFairlead) - lugW).getNormalized();
+    // (tilted up by kCarrySocketRiseDeg: the dump rope holds the socket above the lugs in carry)
+    const PxVec3 toFairS  = (housePose().transform(cfg::kFairlead) - lugW).getNormalized();
+    const PxVec3 flat     = PxVec3(toFairS.x, 0.0f, toFairS.z).getNormalized();
+    const float  elev     = std::asin(toFairS.y) + (hasDrag() ? cfg::kCarrySocketRiseDeg / cfg::kRadToDeg : 0.0f);
+    const PxVec3 toFair   = flat * std::cos(elev) + PxVec3(0.0f, std::sin(elev), 0.0f);
     const float  inset    = cfg::kMouthLug.x - cfg::kDragSocketEyeHalfW;
     const float  reach    = std::sqrt(cfg::kDragChainLen * cfg::kDragChainLen - inset * inset);
     const PxVec3 socketC  = lugW + toFair * reach;
     const PxQuat socketQ  = yaw * PxShortestRotation(PxVec3(0.0f, 0.0f, -1.0f), yaw.rotateInv(toFair));
 
+    const PxVec3 blockC = PxTransform(yokeC, yaw).transform(cfg::kDumpBlockHang) - PxVec3(0.0f, cfg::kDumpBlockSling, 0.0f);
     return {PxTransform(yokeC, yaw), PxTransform(spreaderC, yaw), PxTransform(bucketO, bucketQ),
-            PxTransform(socketC, socketQ)};
+            PxTransform(socketC, socketQ), PxTransform(blockC, yaw)};
 }
 
 void Dragline::placeRig()
@@ -438,7 +445,11 @@ void Dragline::placeRig()
         };
         place(rigYoke_, p.yoke);
         place(rigSpreader_, p.spreader);
-        if (hasDrag()) place(rigSocket_, p.socket);
+        if (hasDrag())
+        {
+            place(rigSocket_, p.socket);
+            place(rigDumpBlock_, p.dumpBlock);
+        }
         for (ChainRig& chain : chains_)
         {
             if (chain.linkCount == 0) continue;
@@ -452,6 +463,9 @@ void Dragline::placeRig()
             PxVec3 fairlead, eye;
             dragEnds(fairlead, eye);
             dragDrum_.reset((eye - fairlead).magnitude() + cfg::kDragInitialSlack);
+            PxVec3 arch, sheave, dumpEye; // dump rope: exactly taut in the placed (carry) pose
+            dumpEnds(arch, sheave, dumpEye);
+            dumpLength_ = (arch - sheave).magnitude() + (dumpEye - sheave).magnitude();
         }
         rig_.clearWarmStart();
         if (hasDrag()) settleDirect();
@@ -585,6 +599,11 @@ void Dragline::createDirectRig()
         const PxTransform local = comInv * PxTransform(part.center);
         bucket.boxes.push_back({toRig(local.p), toRig(local.q), toRig(part.half)});
     }
+    for (const cfg::BoxPart& part : cfg::kBucketRigCovers) // keeps the socket and chains out of the cavity
+    {
+        const PxTransform local = comInv * PxTransform(part.center);
+        bucket.boxes.push_back({toRig(local.p), toRig(local.q), toRig(part.half)});
+    }
     rigBucket_ = rig_.addBody(bucket);
 
     rig::Body house; // origin on the swing axis: carries the boom tip end of the hoist rope
@@ -608,6 +627,12 @@ void Dragline::createDirectRig()
         createDirectChain(chains_[side > 0.0f ? DragL : DragR], rigBucket_, mouthLug(side), rigSocket_,
                           socketChainEye(side), cfg::kDragChainLen, cfg::kDragChainLinks, cfg::kDragChainMassPerM);
     dragRope_ = rig_.addRope(rigSocket_, toRig(socketRopeEye()), rigHouse_, toRig(cfg::kFairlead));
+
+    // dump rope: arch -> dump block sheave (on the yoke) -> socket top
+    rigDumpBlock_ = addRigBoxBody(cfg::kDumpBlockHalf, cfg::kDumpBlockMass);
+    rig_.addBall(rigYoke_, toRig(cfg::kDumpBlockHang), rigDumpBlock_, rig::Vec3(0.0, cfg::kDumpBlockSling, 0.0));
+    dumpRope_ = rig_.addPulleyRope(rigBucket_, toRig(bucket_->getCMassLocalPose().transformInv(cfg::kArch)),
+                                   rigDumpBlock_, rig::Vec3::Zero(), rigSocket_, toRig(cfg::kSocketDumpEye));
 }
 
 void Dragline::solveDirect(float dt)
@@ -633,6 +658,7 @@ void Dragline::solveDirect(float dt)
                       cfg::kRopeDamping);
     rig_.setRopeState(dragRope_, dragDrum_.payout(), dragDrum_.speed(),
                       cfg::kRopeEA / std::max(dragDrum_.payout(), 1.0f), cfg::kRopeDamping);
+    rig_.setRopeState(dumpRope_, dumpLength_, 0.0, cfg::kDumpRopeEA / std::max(dumpLength_, 1.0f), cfg::kRopeDamping);
     if (!rig_.step(dt)) return;
 
     rig::Vec3 p, l;
@@ -694,7 +720,14 @@ void Dragline::settleDirect()
     const DraglineControls hold; // drums on their holding brakes
     const float            h = cfg::kSettleDt / static_cast<float>(cfg::kSubSteps);
     for (float t = 0.0f; t < cfg::kSettleTime; t += cfg::kSettleDt)
+    {
         for (int i = 0; i < cfg::kSubSteps; ++i) subStep(hold, h);
+        // hold the carry attitude like an operator would: reel the drag rope in until the drag chains
+        // pull the dump rope tight enough for the carry pitch (paying out lowers the mouth)
+        if (t >= cfg::kSettleCarryTime) continue;
+        const float pay = dragDrum_.payout() - cfg::kSettleCarryGain * (carryPitch() - bucketPitch()) * cfg::kSettleDt;
+        dragDrum_.reset(std::clamp(pay, cfg::kDragLenMin, cfg::kDragLenMax));
+    }
 
     for (rig::Body& b : rig_.bodies)
     {
@@ -710,7 +743,7 @@ void Dragline::settleDirect()
 void Dragline::subStep(const DraglineControls& c, float dt)
 {
     // swing drive: rate ramps toward the commanded rate, limited by swing acceleration
-    const float targetRate = std::clamp(c.swing, -1.0f, 1.0f) * cfg::kSwingMaxRate;
+    const float targetRate = std::clamp(c.swing, -1.0f, 1.0f) * swingMaxRate_;
     const float maxDelta   = cfg::kSwingAccel * dt;
     swingRate_ += std::clamp(targetRate - swingRate_, -maxDelta, maxDelta);
     swingAngle_ += swingRate_ * dt;
@@ -829,6 +862,32 @@ bool Dragline::dragRopeTaut() const
 float Dragline::dragTension() const
 {
     return hasDrag() ? static_cast<float>(-rig_.ropeImpulse(dragRope_) / lastH_) : 0.0f;
+}
+
+void Dragline::dumpEnds(PxVec3& arch, PxVec3& sheave, PxVec3& socketEye) const
+{
+    arch      = bucket_->getGlobalPose().transform(cfg::kArch);
+    sheave    = hasDrag() ? dumpBlockPose().p : arch;
+    socketEye = hasDrag() ? socketPose().transform(cfg::kSocketDumpEye) : arch;
+}
+
+bool Dragline::dumpRopeTaut() const
+{
+    if (!hasDrag()) return false;
+    PxVec3 arch, sheave, eye;
+    dumpEnds(arch, sheave, eye);
+    return (arch - sheave).magnitude() + (eye - sheave).magnitude() >= dumpLength_ - cfg::kTautBand;
+}
+
+float Dragline::dumpTension() const
+{
+    return hasDrag() ? static_cast<float>(-rig_.ropeImpulse(dumpRope_) / lastH_) : 0.0f;
+}
+
+float Dragline::bucketPitch() const
+{
+    const PxVec3 mouth = bucket_->getGlobalPose().q.rotate(PxVec3(0.0f, 0.0f, -1.0f));
+    return std::asin(std::clamp(mouth.y, -1.0f, 1.0f));
 }
 
 float Dragline::lineTension() const

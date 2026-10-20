@@ -86,6 +86,7 @@ public:
     float motorForce() const { return motorOut_; }
     bool  holdingBrake() const { return holding_; }
     const HoistDrumParams& params() const { return p_; }
+    void setMotorForce(float force) { p_.motorForce = std::max(force, 0.0f); } // live tuning (max line pull)
 
 private:
     static float sign(float x) { return x < 0.0f ? -1.0f : 1.0f; }

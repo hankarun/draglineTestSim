@@ -113,16 +113,34 @@ constexpr float kDragLenMax       = 48.0f; // [xml] Dragline.DragRopeLenMaxM
 constexpr float kDragInitialSlack = 0.0f;  // m of slack in the drag rope at spawn / reset (0 = just taut)
 constexpr int   kDragChainLinks   = 6;     // [xml] main sim kDragChainNumLinks (14 visual slots = 2 x (6 + 1))
 // not in the config (assumed until the main sim's RiggingSolver.h values are known):
-constexpr float kDragChainLen       = 3.0f;   // m, each lug -> socket
-constexpr float kDragChainMassPerM  = 100.0f; // kg/m
-constexpr float kDragSocketMass     = 400.0f; // drag socket / hitch
+constexpr float kDragChainLen       = 5.0f;   // m, each lug -> socket (3 m locks the dump: arch -> block -> socket -> chains -> lugs runs out of length near -50 deg)
+constexpr float kDragChainMassPerM  = 50.0f;  // kg/m (100 + a 400 kg socket outweigh the empty bucket on the dump rope: no dump)
+constexpr float kDragSocketMass     = 200.0f; // drag socket / hitch
 inline const PxVec3 kDragSocketHalf(0.25f, 0.15f, 0.35f); // socket-local -Z = rope eye, toward the machine
 constexpr float kDragSocketEyeHalfW = 0.25f;  // chain eyes on the socket side faces, level with its centre
+// Dump rope: fixed length, bucket arch -> over the dump block -> socket top. Taut while the drag rope pulls
+// the socket away: holds the mouth up; paying the drag rope out lets the bucket tip mouth-down (dump) and
+// the dump rope lifts the socket toward the block.
+// Dump block: own body (frictionless sheave at its centre) hanging from the yoke on a rigid sling with a
+// ball joint, so the dump rope swings it forward over the arch and the socket. (A sheave fixed on the
+// yoke left the socket hanging off a long, steep rope segment: on release it swung in sideways.)
+// Pinned up at the hoist socket (yoke top), a little in front of the hoist rope because of the yoke: a block
+// hung below the yoke put the sheave so low that the socket hung down into the dumped bucket.
+inline const PxVec3 kDumpBlockHang(0.0f, 0.2f, -0.4f); // yoke-local sling pin: top, in front of the yoke (-Z = machine side)
+constexpr float     kDumpBlockSling = 0.25f;           // m, sling pin -> block centre
+constexpr float     kDumpBlockMass  = 150.0f;
+inline const PxVec3 kDumpBlockHalf(0.12f, 0.18f, 0.08f);
+inline const PxVec3 kSocketDumpEye(0.0f, 0.15f, 0.0f); // socket-local: top face centre
+constexpr float kCarryPitchDeg = 12.0f; // mouth-up pitch the dump rope length is sized for
+constexpr float kCarrySocketRiseDeg = 45.0f; // drag chains above the lug -> fairlead line in that pose: shorter dump rope
+constexpr float kDumpRopeEA    = kRopeEA; // N, k = EA / L
 // spawn / reset settle (direct model with the drag side): damped pre-roll, then all velocities zeroed
 constexpr float kSettleTime       = 5.0f;  // s
 constexpr float kSettleDt         = 1.0f / 60.0f;
 constexpr float kSettleLinDamping = 2.0f;  // 1/s, extra, on every rig body and the bucket
 constexpr float kSettleAngDamping = 3.0f;  // 1/s
+constexpr float kSettleCarryGain  = 4.0f;  // m/s of drag rope per rad of pitch error while settling
+constexpr float kSettleCarryTime  = 3.5f;  // s of the settle the servo runs; the rest settles at a fixed payout
 
 // --- bucket (bucket-local: origin at the trunnion axis, -Z = mouth, toward the machine) ---
 constexpr float  kBucketMass = 3000.0f;
@@ -157,5 +175,13 @@ inline const BoxPart kBucketParts[] = {
     {PxVec3(kWallX, 0.5f * (kWallTop + kArch.y), kArch.z), PxVec3(kWallHalfT, 0.5f * (kArch.y - kWallTop), 0.08f)},  // arch leg L
     {PxVec3(-kWallX, 0.5f * (kWallTop + kArch.y), kArch.z), PxVec3(kWallHalfT, 0.5f * (kArch.y - kWallTop), 0.08f)}, // arch leg R
     {kArch, PxVec3(kWallX + kWallHalfT, 0.08f, 0.08f)},                                                  // arch beam
+};
+// Invisible covers over the cavity, direct-model rig contacts only (not PhysX, not drawn): without them
+// the dump rope (no collision of its own) pulls the socket in through the open mouth of a dumped bucket
+// and the drag chains follow it in and stick. No soil is simulated, so nothing else needs the cavity open.
+constexpr float kFloorTop = kFloorBottom + 0.16f;
+inline const BoxPart kBucketRigCovers[] = {
+    {PxVec3(0.0f, 0.5f * (kFloorTop + kArch.y - 0.08f), kArch.z), PxVec3(kInnerHalfW, 0.5f * (kArch.y - 0.08f - kFloorTop), 0.05f)}, // mouth
+    {PxVec3(0.0f, kWallTop - 0.05f, 0.5f * (kArch.z + 0.8f)), PxVec3(kInnerHalfW, 0.05f, 0.5f * (0.8f - kArch.z))},                 // top
 };
 } // namespace cfg

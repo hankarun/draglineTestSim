@@ -56,6 +56,14 @@ int Solver::addRope(int a, const Vec3& anchorA, int b, const Vec3& anchorB)
     return static_cast<int>(ropes_.size()) - 1;
 }
 
+int Solver::addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB)
+{
+    const int i  = addRope(a, anchorA, b, anchorB);
+    ropes_[i].s  = s;
+    ropes_[i].ps = sheave;
+    return i;
+}
+
 void Solver::setRopeState(int rope, Real length, Real lengthRate, Real stiffness, Real damping)
 {
     Rope& r  = ropes_[rope];
@@ -63,13 +71,6 @@ void Solver::setRopeState(int rope, Real length, Real lengthRate, Real stiffness
     r.rate   = lengthRate;
     r.k      = stiffness;
     r.d      = damping;
-}
-
-bool Solver::jointed(int a, int b) const
-{
-    for (const Ball& j : balls_)
-        if ((j.a == a && j.b == b) || (j.a == b && j.b == a)) return true;
-    return false;
 }
 
 void Solver::pointRow(Row& row, int a, const Vec3& p, int b, const Vec3& q, const Vec3& n) const
@@ -83,7 +84,7 @@ void Solver::pointRow(Row& row, int a, const Vec3& p, int b, const Vec3& q, cons
 Real Solver::rowVelocity(const Row& row) const
 {
     Real s = 0.0;
-    for (int k = 0; k < 2; ++k)
+    for (int k = 0; k < 3; ++k)
     {
         if (row.body[k] < 0) continue;
         const Body& b = bodies[row.body[k]];
@@ -135,8 +136,17 @@ void Solver::buildContacts(Real h)
         for (int b = 0; b < n; ++b)
         {
             const Body& B = bodies[b];
-            if (b == a || B.boxes.empty() || !(A.group & B.collideWith) || !(B.group & A.collideWith) || jointed(a, b))
-                continue;
+            if (b == a || B.boxes.empty() || !(A.group & B.collideWith) || !(B.group & A.collideWith)) continue;
+            // jointed pair (a link on its eye): only the spheres at the joint ignore b, the rest of the
+            // link still collides (a link pinned at the mouth lug must not pass through the arch)
+            std::vector<Vec3> joints;
+            for (const Ball& j : balls_)
+                if ((j.a == a && j.b == b) || (j.a == b && j.b == a)) joints.push_back(worldPoint(j.a, j.pa));
+            auto nearJoint = [&](const Vec3& c) {
+                for (const Vec3& p : joints)
+                    if ((c - p).norm() < P.jointContactSkip) return true;
+                return false;
+            };
             Real reachB = 0.0;
             for (const Box& box : B.boxes) reachB = std::max(reachB, box.center.norm() + box.half.norm());
             if ((A.x - B.x).norm() > reach + reachB + P.margin) continue;
@@ -148,6 +158,7 @@ void Solver::buildContacts(Real h)
                 const Vec3 cb  = B.x + B.q * box.center;
                 for (size_t i = 0; i < centres.size(); ++i)
                 {
+                    if (nearJoint(centres[i])) continue;
                     const Vec3 p  = qb.conjugate() * (centres[i] - cb); // box-local sphere centre
                     const Vec3 cl = p.cwiseMax(-box.half).cwiseMin(box.half);
                     Vec3       nl, ql;
@@ -288,11 +299,30 @@ bool Solver::step(Real h)
         const Rope& rope = ropes_[i];
         const Vec3  pa   = worldPoint(rope.a, rope.pa);
         const Vec3  pb   = worldPoint(rope.b, rope.pb);
-        const Vec3  d    = pa - pb;
-        const Real  l    = d.norm();
-        if (l <= 1e-9) continue;
-        Row r;
-        pointRow(r, rope.a, pa, rope.b, pb, d / l);
+        Row         r;
+        Real        l;
+        if (rope.s < 0)
+        {
+            const Vec3 d = pa - pb;
+            l            = d.norm();
+            if (l <= 1e-9) continue;
+            pointRow(r, rope.a, pa, rope.b, pb, d / l);
+        }
+        else // pulley: l = |pa - ps| + |pb - ps|, the sheave takes -(n1 + n2)
+        {
+            const Vec3 ps = worldPoint(rope.s, rope.ps);
+            const Vec3 d1 = pa - ps, d2 = pb - ps;
+            const Real l1 = d1.norm(), l2 = d2.norm();
+            if (l1 <= 0.01 || l2 <= 0.01) continue; // an end at the sheave: no direction, the rope is slack anyway
+            l              = l1 + l2;
+            const Vec3 n1  = d1 / l1, n2 = d2 / l2, ns = -(n1 + n2);
+            r.body[0]      = rope.a;
+            r.J[0] << n1.transpose(), (pa - bodies[rope.a].x).cross(n1).transpose();
+            r.body[1]      = rope.b;
+            r.J[1] << n2.transpose(), (pb - bodies[rope.b].x).cross(n2).transpose();
+            r.body[2]      = rope.s;
+            r.J[2] << ns.transpose(), (ps - bodies[rope.s].x).cross(ns).transpose();
+        }
         const Real den = h * rope.k + rope.d;
         r.sigma        = 1.0 / (h * den);
         r.rhs          = -(rowVelocity(r) - rope.rate + rope.k * (l - rope.length) / den);
@@ -312,7 +342,7 @@ bool Solver::step(Real h)
         std::vector<Triplet> t;
         t.reserve(rows.size() * 12);
         for (size_t i = 0; i < rows.size(); ++i)
-            for (int k = 0; k < 2; ++k)
+            for (int k = 0; k < 3; ++k)
             {
                 const int b = rows[i].body[k];
                 if (b < 0 || col_[b] < 0) continue;

@@ -74,6 +74,7 @@ struct Params
     int      pgsIterations = 80;
     Real     pgsTolerance  = 1e-7;  // N s, stop when no impulse changes more than this
     int      maxContactsPerPair = 2; // deepest per (body, other body / ground)
+    Real     jointContactSkip = 0.2; // m: spheres this close to a ball joint ignore the body on its other side
     uint32_t groundGroup   = 1;     // ground plane y = 0
 };
 
@@ -86,6 +87,8 @@ public:
     int  addBody(const Body& body);
     void addBall(int a, const Vec3& anchorA, int b, const Vec3& anchorB); // anchors in body frames
     int  addRope(int a, const Vec3& anchorA, int b, const Vec3& anchorB); // returns the rope index
+    // rope from a over a frictionless sheave point on s to b (spec 4.4): length = |pa - ps| + |pb - ps|
+    int  addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB);
     // paid-out length, its rate (rope can only pull), axial stiffness and damping
     void setRopeState(int rope, Real length, Real lengthRate, Real stiffness, Real damping);
     void clearWarmStart() { warm_.clear(); }
@@ -109,15 +112,15 @@ private:
     };
     struct Rope
     {
-        int  a = -1, b = -1;
-        Vec3 pa = Vec3::Zero(), pb = Vec3::Zero();
+        int  a = -1, b = -1, s = -1; // s >= 0: runs over a sheave on body s
+        Vec3 pa = Vec3::Zero(), pb = Vec3::Zero(), ps = Vec3::Zero();
         Real length = 1.0, rate = 0.0, k = 1.0, d = 0.0;
         Real lambda = 0.0; // last step's impulse, also its warm start
     };
     struct Row
     {
-        int      body[2] = {-1, -1};
-        Row6     J[2];
+        int      body[3] = {-1, -1, -1}; // the third only for a pulley (its sheave body)
+        Row6     J[3];
         Real     rhs    = 0.0; // -(J u* - target + bias)
         Real     sigma  = 0.0; // compliance on the diagonal
         Real     lo     = 0.0, hi = 0.0;
@@ -130,10 +133,9 @@ private:
     void pointRow(Row& row, int a, const Vec3& p, int b, const Vec3& q, const Vec3& n) const;
     Real rowVelocity(const Row& row) const; // J u at the current (free) velocities, kinematic bodies included
     void buildContacts(Real h);
-    bool jointed(int a, int b) const;
 
     std::vector<Ball> balls_;
-    std::vector<Rope> ropes_; // hoist, drag, ...: their rows come first in rowsC_
+    std::vector<Rope> ropes_; // hoist, drag, dump: their rows come first in rowsC_
     std::vector<int>  col_; // body -> first column of its DOFs, -1 if kinematic
     int               nCols_ = 0;
 

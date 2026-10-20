@@ -63,6 +63,20 @@ public:
     bool               dragRopeTaut() const;
     float              dragTension() const; // N
     const HoistDrum&   dragDrum() const { return dragDrum_; }
+    void               setDragMotorForce(float force) { dragDrum_.setMotorForce(force); } // N, max drag line pull
+
+    // live tuning (app sliders)
+    void  setHoistMotorForce(float force) { drum_.setMotorForce(force); } // N, max hoist line pull
+    void  setSwingMaxRate(float rate) { swingMaxRate_ = rate; }          // rad/s at full swing lever
+    float swingMaxRate() const { return swingMaxRate_; }
+
+    // dump rope (with the drag side): bucket arch -> dump block sheave (block hangs from the yoke) -> socket top
+    physx::PxTransform dumpBlockPose() const { return hasDrag() ? rigPose(rigDumpBlock_) : physx::PxTransform(physx::PxIdentity); }
+    void  dumpEnds(physx::PxVec3& arch, physx::PxVec3& sheave, physx::PxVec3& socketEye) const;
+    float dumpRopeLength() const { return dumpLength_; } // fixed, sized at spawn for cfg::kCarryPitchDeg
+    bool  dumpRopeTaut() const;
+    float dumpTension() const; // N
+    float bucketPitch() const; // rad, mouth direction above the horizontal (> 0 = mouth up)
 
 private:
     // one chain: links run from eye A (on actor a) to eye B (on actor b); link-local +X points A -> B.
@@ -82,7 +96,7 @@ private:
 
     struct RigPoses
     {
-        physx::PxTransform yoke, spreader, bucket, socket; // socket: direct model only
+        physx::PxTransform yoke, spreader, bucket, socket, dumpBlock; // socket, dump block: direct model only
     };
 
     void setupBody(physx::PxRigidBody& body);  // damping, CCD, depenetration cap
@@ -145,8 +159,9 @@ private:
     ChainRig                chains_[ChainCount];
 
     rig::Solver   rig_; // direct model only
-    int           rigBucket_ = -1, rigHouse_ = -1, rigYoke_ = -1, rigSpreader_ = -1, rigSocket_ = -1;
-    int           hoistRope_ = -1, dragRope_ = -1; // solver rope indices
+    int           rigBucket_ = -1, rigHouse_ = -1, rigYoke_ = -1, rigSpreader_ = -1, rigSocket_ = -1, rigDumpBlock_ = -1;
+    int           hoistRope_ = -1, dragRope_ = -1, dumpRope_ = -1; // solver rope indices
+    float         dumpLength_ = 0.0f;
     physx::PxVec3 bucketAccel_{0.0f};    // last substep's bucket acceleration from everything but the rig
     physx::PxVec3 bucketAngAccel_{0.0f};
     physx::PxVec3 bucketV0_{0.0f}, bucketW0_{0.0f}, bucketDv_{0.0f}, bucketDw_{0.0f}; // around the PhysX step
@@ -156,4 +171,5 @@ private:
     HoistDrum dragDrum_{dragParams(), cfg::kDragLenMax}; // payout set when the rig is placed
     float     swingAngle_ = 0.0f;
     float     swingRate_  = 0.0f;
+    float     swingMaxRate_ = cfg::kSwingMaxRate;
 };
