@@ -4,6 +4,11 @@ project(customDragline LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# only release PhysX libs ship in the repo, so the Debug config (debug CRT) does not link
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(FATAL_ERROR "Debug is not supported (release-only PhysX libs): use Release or RelWithDebInfo")
+endif()
+
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "PhysX binaries are x64 only - configure with -A x64")
 endif()
@@ -47,8 +52,8 @@ target_include_directories(PhysX INTERFACE
     "${PHYSX_ROOT}/pxshared/include"
 )
 
-# Debug -> debug libs, everything else -> release libs
-set(PHYSX_CFG "$<IF:$<CONFIG:Debug>,debug,release>")
+# only the release libs are in the repo; every config links them
+set(PHYSX_CFG release)
 set(PHYSX_LIBS
     PhysX_64
     PhysXCommon_64

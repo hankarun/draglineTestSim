@@ -14,13 +14,15 @@ run in our own solver (`src/RigSolver.*`, Eigen, sparse LDLT). Rendering is rayl
 
 Windows, x64, MSVC, CMake 3.24+.
 
-PhysX is not in the repo. Put the PhysX 4.1.2 SDK in `PhysX-4.1.2/` (it needs the prebuilt
-`physx/bin/win.x86_64.vc142.md` libraries). raylib and Eigen are fetched by CMake.
+The PhysX 4.1.2 headers and release libraries are in `PhysX-4.1.2/` (BSD-3, see the README
+there), so nothing to install. raylib and Eigen are fetched by CMake.
 
 ```
 cmake -S . -B build -A x64
 cmake --build build --config Release
 ```
+
+Debug does not link (the repo only has the release PhysX libs). Use RelWithDebInfo to debug.
 
 ## Running
 
@@ -63,5 +65,3 @@ build\Release\dragline_selftest.exe replay rec.txt   # replay a recording saved 
 - `src/Dragline.cpp`: scene setup and the three chain models
 - `src/RigSolver.cpp`: the direct solver
 - `src/HoistDrum.h`: winch model (used for hoist and drag)
-- `HANDOFF.md`: current state and open problems
-- `chain_stability_findings.md`, `dragline_chain_solver_spec.md`: background
