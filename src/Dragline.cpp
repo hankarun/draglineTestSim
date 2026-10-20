@@ -199,9 +199,16 @@ void Dragline::addBucketShell(PxRigidBody& bucket)
         addShape(bucket, *material_, PxBoxGeometry(part.half), PxTransform(part.center));
     setFilter(bucket, cfg::kGroupRig, cfg::kCollideAll);
     PxRigidBodyExt::setMassAndUpdateInertia(bucket, cfg::kBucketMass); // COM from the shell shapes
-    PxTransform com = bucket.getCMassLocalPose();
-    com.p += cfg::kBucketComShift;
-    bucket.setCMassLocalPose(com);
+    // Shift the COM and carry the tensor to it (parallel axis): setCMassLocalPose alone keeps the
+    // tensor about the shell centroid, ~35% short in pitch and yaw.
+    const PxTransform shell = bucket.getCMassLocalPose();
+    const PxMat33 inertia = PxMassProperties::translateInertia(
+        PxMassProperties::rotateInertia(PxMat33::createDiagonal(bucket.getMassSpaceInertiaTensor()), shell.q),
+        bucket.getMass(), cfg::kBucketComShift);
+    PxQuat       frame;
+    const PxVec3 diag = PxMassProperties::getMassSpaceInertia(inertia, frame);
+    bucket.setMassSpaceInertiaTensor(diag);
+    bucket.setCMassLocalPose(PxTransform(shell.p + cfg::kBucketComShift, frame));
 }
 
 void Dragline::addLinkShape(PxRigidBody& link, float linkLength)
@@ -557,8 +564,8 @@ void Dragline::createDirectChain(ChainRig& chain, int aBody, const PxVec3& eyeA,
     rig::Body link;
     link.invMass     = 1.0 / m;
     link.invInertia  = rig::Vec3(1.0 / iAxis, 1.0 / iPerp, 1.0 / iPerp);
-    link.linDamping  = 0.02;
-    link.angDamping  = cfg::kRigAngularDamping;
+    link.linDamping  = cfg::kChainLinkLinDamping;
+    link.angDamping  = cfg::kChainLinkAngDamping;
     link.group       = cfg::kGroupChain;
     link.collideWith = cfg::kCollideChain;
     link.sphereRadius = r;

@@ -72,17 +72,17 @@ constexpr physx::PxU32 kCollideChain = kGroupWorld | kGroupMachine | kGroupRig;
 
 // --- hoist rigging: hoist rope -> yoke -> upper chains -> spreader -> lower chains -> bucket ---
 constexpr float  kGroundedHeight = 0.1f; // m, bucket floor this close to the ground counts as resting on it
-constexpr float  kYokeMass = 400.0f;
+constexpr float  kYokeMass = 250.0f; // rigging total ~1.4 t, ~50% of the bucket (large-dragline patents: 20 t rig / 40 t bucket)
 inline const PxVec3 kYokeHalf(0.25f, 0.2f, 0.25f);
 
-constexpr float  kSpreaderMass = 600.0f;
+constexpr float  kSpreaderMass = 350.0f;
 constexpr float  kSpreaderHalfW = 0.8231f; // chain eyes at the bar ends, plumb over the bucket pins
 inline const PxVec3 kSpreaderHalf(0.9f, 0.1f, 0.12f);
 
 // chains: real link bodies joined by spherical joints (heavy, so they sag and lag)
 constexpr float kUpperChainLen     = 2.6f;   // [xml] UpperChainLenM (yoke -> each spreader end)
 constexpr int   kChainLinks        = 5;      // per chain ([xml] has 8: RopeHandlerHoistChainLinks_*_0..7); 4 lets links pass through the bucket
-constexpr float kChainMassPerM     = 100.0f; // kg/m, heavy hoist chain
+constexpr float kChainMassPerM     = 40.0f;  // kg/m, hoist chain (~45 mm link; 100 outweighed a 2.7 t bucket)
 constexpr float kChainLinkRadius   = 0.06f;  // m, capsule radius of one link
 constexpr float kChainInertiaScale = 4.0f;   // boosts link inertia: standard trick for stable joint chains
 
@@ -99,8 +99,13 @@ constexpr physx::PxU32 kArtVelIters        = 1;  // 4 (the spec's start value) b
 constexpr float        kChainTwistLimit    = 0.3f;  // rad, per link-to-link joint
 constexpr float        kChainJointFriction = 0.05f; // articulation joint friction coefficient
 // direct model: link-to-link friction as a rotational damper per joint. Without it a slack chain
-// loop swings freely for many seconds (no contacts involved); 5 settles it, 20+ is no better.
-constexpr double       kChainJointDamping  = 5.0;   // N m s/rad
+// loop swings freely for many seconds (no contacts involved); 5 settles it but the links still
+// flick about like a light rope. 80 (link time constant I/d ~ 0.06 s) reads as heavy chain.
+constexpr double       kChainJointDamping  = 80.0;  // N m s/rad
+// direct model: per-link body damping (1/s). Heavier than the rest of the rig so links lag and
+// drape instead of whipping; linear stays well under g/v for any swing speed we see.
+constexpr double       kChainLinkLinDamping = 0.5;
+constexpr double       kChainLinkAngDamping = 4.0;
 
 // --- drag rigging (direct model only): mouth lugs -> 2 drag chains -> socket -> drag rope -> fairlead ---
 // Fairlead (house-local): inside the boom foot, centred between the lattice chords, a little up the
@@ -114,8 +119,8 @@ constexpr float kDragInitialSlack = 0.0f;  // m of slack in the drag rope at spa
 constexpr int   kDragChainLinks   = 6;     // [xml] main sim kDragChainNumLinks (14 visual slots = 2 x (6 + 1))
 // not in the config (assumed until the main sim's RiggingSolver.h values are known):
 constexpr float kDragChainLen       = 5.0f;   // m, each lug -> socket (3 m locks the dump: arch -> block -> socket -> chains -> lugs runs out of length near -50 deg)
-constexpr float kDragChainMassPerM  = 50.0f;  // kg/m (100 + a 400 kg socket outweigh the empty bucket on the dump rope: no dump)
-constexpr float kDragSocketMass     = 200.0f; // drag socket / hitch
+constexpr float kDragChainMassPerM  = 30.0f;  // kg/m (100 + a 400 kg socket outweigh the empty bucket on the dump rope: no dump)
+constexpr float kDragSocketMass     = 150.0f; // drag socket / hitch
 inline const PxVec3 kDragSocketHalf(0.25f, 0.15f, 0.35f); // socket-local -Z = rope eye, toward the machine
 constexpr float kDragSocketEyeHalfW = 0.25f;  // chain eyes on the socket side faces, level with its centre
 // Dump rope: fixed length, bucket arch -> over the dump block -> socket top. Taut while the drag rope pulls
@@ -144,7 +149,7 @@ constexpr float kSettleCarryGain  = 4.0f;  // m/s of drag rope per rad of pitch 
 constexpr float kSettleCarryTime  = 3.5f;  // s of the settle the servo runs; the rest settles at a fixed payout
 
 // --- bucket (bucket-local: origin at the trunnion axis, -Z = mouth, toward the machine) ---
-constexpr float  kBucketMass = 3000.0f;
+constexpr float  kBucketMass = 2700.0f; // real HS 825 bucket ~2.7 t
 inline const PxVec3 kBucketComShift(0.0f, 0.0f, -0.8f); // added to the COM of the shell shapes (cast lip + teeth are heavy)
 inline const PxVec3 kHoistPin(0.8231f, -0.0235f, -0.0036f); // [xml] Dragline.Rig.HoistChainAttach{HalfW,Y,Z}M (+-X)
 constexpr float  kSpreaderAboveBucket = 1.879f;             // [xml] Dragline.Rig.SpreaderBarMeshLocalYM
