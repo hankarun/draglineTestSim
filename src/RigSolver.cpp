@@ -56,12 +56,49 @@ int Solver::addRope(int a, const Vec3& anchorA, int b, const Vec3& anchorB)
     return static_cast<int>(ropes_.size()) - 1;
 }
 
-int Solver::addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB)
+int Solver::addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB,
+                          Real radius, const Vec3& axis, int axisBody)
 {
-    const int i  = addRope(a, anchorA, b, anchorB);
-    ropes_[i].s  = s;
-    ropes_[i].ps = sheave;
+    const int i        = addRope(a, anchorA, b, anchorB);
+    ropes_[i].s        = s;
+    ropes_[i].ps       = sheave;
+    ropes_[i].radius   = radius;
+    ropes_[i].axis     = axis.normalized();
+    ropes_[i].axisBody = axisBody >= 0 ? axisBody : s;
     return i;
+}
+
+Vec3 Solver::pulleyAxis(int rope) const
+{
+    const Rope& r = ropes_[rope];
+    return bodies[r.axisBody].q * r.axis;
+}
+
+SheavePath sheavePath(const Vec3& pa, const Vec3& ps, const Vec3& pb, Real radius, const Vec3& axis, int sense)
+{
+    SheavePath p;
+    const Vec3 n  = axis.normalized();
+    Vec3       da = pa - ps, db = pb - ps;
+    da -= n * n.dot(da); // into the sheave plane
+    db -= n * n.dot(db);
+    const Real la = da.norm(), lb = db.norm();
+    if (la <= radius + 0.01 || lb <= radius + 0.01) return p;
+    const Vec3 na = da / la, nb = db / lb;
+    const Real gamma = std::atan2(n.dot(na.cross(nb)), na.dot(nb)); // signed angle a -> b about the axis
+    p.sense          = sense != 0 ? sense : (gamma >= 0.0 ? 1 : -1);
+    // rim points: rotated off each end's direction toward the wrap, a's backward and b's forward in the sense
+    const Real ca = radius / la, cb = radius / lb; // cos of the angle centre->end vs centre->rim point
+    const Real sa = std::sqrt(1.0 - ca * ca), sb = std::sqrt(1.0 - cb * cb);
+    p.ta = ps + radius * (ca * na - p.sense * sa * n.cross(na));
+    p.tb = ps + radius * (cb * nb + p.sense * sb * n.cross(nb));
+    const Vec3 fa = pa - p.ta, fb = pb - p.tb;
+    p.ua = fa.normalized();
+    p.ub = fb.normalized();
+    // wrap angle in the fixed sense: grows past 2 pi - offsets when the ends cross (the falls cross)
+    const Real wrap = std::max(2.0 * 3.14159265358979323846 - p.sense * gamma - std::acos(ca) - std::acos(cb), 0.0);
+    p.length        = fa.norm() + fb.norm() + radius * wrap;
+    p.valid         = true;
+    return p;
 }
 
 void Solver::setRopeState(int rope, Real length, Real lengthRate, Real stiffness, Real damping)
@@ -296,7 +333,7 @@ bool Solver::step(Real h)
     std::vector<int> ropeRows(ropes_.size(), -1);
     for (size_t i = 0; i < ropes_.size(); ++i)
     {
-        const Rope& rope = ropes_[i];
+        Rope&       rope = ropes_[i];
         const Vec3  pa   = worldPoint(rope.a, rope.pa);
         const Vec3  pb   = worldPoint(rope.b, rope.pb);
         Row         r;
@@ -308,14 +345,14 @@ bool Solver::step(Real h)
             if (l <= 1e-9) continue;
             pointRow(r, rope.a, pa, rope.b, pb, d / l);
         }
-        else // pulley: l = |pa - ps| + |pb - ps|, the sheave takes -(n1 + n2)
+        else // pulley: tangents + wrap over the sheave, which takes -(n1 + n2) at its centre (frictionless: no torque)
         {
-            const Vec3 ps = worldPoint(rope.s, rope.ps);
-            const Vec3 d1 = pa - ps, d2 = pb - ps;
-            const Real l1 = d1.norm(), l2 = d2.norm();
-            if (l1 <= 0.01 || l2 <= 0.01) continue; // an end at the sheave: no direction, the rope is slack anyway
-            l              = l1 + l2;
-            const Vec3 n1  = d1 / l1, n2 = d2 / l2, ns = -(n1 + n2);
+            const Vec3       ps   = worldPoint(rope.s, rope.ps);
+            const SheavePath path = sheavePath(pa, ps, pb, rope.radius, pulleyAxis(static_cast<int>(i)), rope.sense);
+            if (!path.valid) continue;
+            rope.sense     = path.sense;
+            l              = path.length;
+            const Vec3 n1  = path.ua, n2 = path.ub, ns = -(n1 + n2);
             r.body[0]      = rope.a;
             r.J[0] << n1.transpose(), (pa - bodies[rope.a].x).cross(n1).transpose();
             r.body[1]      = rope.b;

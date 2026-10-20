@@ -72,7 +72,12 @@ public:
 
     // dump rope (with the drag side): bucket arch -> dump block sheave (block hangs from the yoke) -> socket top
     physx::PxTransform dumpBlockPose() const { return hasDrag() ? rigPose(rigDumpBlock_) : physx::PxTransform(physx::PxIdentity); }
-    void  dumpEnds(physx::PxVec3& arch, physx::PxVec3& sheave, physx::PxVec3& socketEye) const;
+    struct DumpPath
+    {
+        physx::PxVec3 arch, archRim, sheave, eyeRim, socketEye; // rim: where each fall leaves the sheave
+        float         length = 0.0f;                            // tangents + wrap
+    };
+    DumpPath dumpPath() const;
     float dumpRopeLength() const { return dumpLength_; } // fixed, sized at spawn for cfg::kCarryPitchDeg
     bool  dumpRopeTaut() const;
     float dumpTension() const; // N

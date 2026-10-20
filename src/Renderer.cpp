@@ -251,18 +251,19 @@ void dragline(const Dragline& d)
              d.dragRopeTaut() ? Color{240, 220, 120, 255} : ORANGE);
         dragSocket(d.socketPose());
 
-        // dump rope: arch -> over the dump block sheave (yoke) -> socket top; slack shared by segment length
-        PxVec3 arch, sheave, dumpEye;
-        d.dumpEnds(arch, sheave, dumpEye);
-        const float l1    = (arch - sheave).magnitude();
-        const float l2    = (dumpEye - sheave).magnitude();
-        const float slack = std::max(d.dumpRopeLength() - l1 - l2, 0.0f);
+        // dump rope: arch -> over the dump block sheave (yoke) -> socket top, each fall from its rim tangent
+        // point (the wrap is hidden by the sheave); slack shared by segment length
+        const Dragline::DumpPath dp = d.dumpPath();
+        const float l1    = (dp.arch - dp.archRim).magnitude();
+        const float l2    = (dp.socketEye - dp.eyeRim).magnitude();
+        const float slack = std::max(d.dumpRopeLength() - dp.length, 0.0f);
         const float share = l1 + l2 > 1e-3f ? l1 / (l1 + l2) : 0.5f;
         const Color dumpCol = d.dumpRopeTaut() ? Color{240, 220, 120, 255} : ORANGE;
-        rope(arch, sheave, l1 + slack * share, forward, dumpCol);
-        rope(sheave, dumpEye, l2 + slack * (1.0f - share), forward, dumpCol);
-        const PxVec3 yokeSide = d.yokePose().q.rotate(PxVec3(0.08f, 0.0f, 0.0f));
-        DrawCylinderEx(toRay(sheave - yokeSide), toRay(sheave + yokeSide), 0.18f, 0.18f, 12, kSteelDark);
+        rope(dp.arch, dp.archRim, l1 + slack * share, forward, dumpCol);
+        rope(dp.eyeRim, dp.socketEye, l2 + slack * (1.0f - share), forward, dumpCol);
+        const PxVec3 blockSide = d.yokePose().q.rotate(PxVec3(0.08f, 0.0f, 0.0f)); // sheave pin across the yoke
+        DrawCylinderEx(toRay(dp.sheave - blockSide), toRay(dp.sheave + blockSide), cfg::kDumpSheaveRadius,
+                       cfg::kDumpSheaveRadius, 16, kSteelDark);
     }
 
     yoke(d.yokePose());

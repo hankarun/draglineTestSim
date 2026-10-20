@@ -199,6 +199,9 @@ void Dragline::addBucketShell(PxRigidBody& bucket)
         addShape(bucket, *material_, PxBoxGeometry(part.half), PxTransform(part.center));
     setFilter(bucket, cfg::kGroupRig, cfg::kCollideAll);
     PxRigidBodyExt::setMassAndUpdateInertia(bucket, cfg::kBucketMass); // COM from the shell shapes
+    PxTransform com = bucket.getCMassLocalPose();
+    com.p += cfg::kBucketComShift;
+    bucket.setCMassLocalPose(com);
 }
 
 void Dragline::addLinkShape(PxRigidBody& link, float linkLength)
@@ -463,9 +466,7 @@ void Dragline::placeRig()
             PxVec3 fairlead, eye;
             dragEnds(fairlead, eye);
             dragDrum_.reset((eye - fairlead).magnitude() + cfg::kDragInitialSlack);
-            PxVec3 arch, sheave, dumpEye; // dump rope: exactly taut in the placed (carry) pose
-            dumpEnds(arch, sheave, dumpEye);
-            dumpLength_ = (arch - sheave).magnitude() + (dumpEye - sheave).magnitude();
+            dumpLength_ = dumpPath().length; // dump rope: exactly taut in the placed (carry) pose
         }
         rig_.clearWarmStart();
         if (hasDrag()) settleDirect();
@@ -632,7 +633,8 @@ void Dragline::createDirectRig()
     rigDumpBlock_ = addRigBoxBody(cfg::kDumpBlockHalf, cfg::kDumpBlockMass);
     rig_.addBall(rigYoke_, toRig(cfg::kDumpBlockHang), rigDumpBlock_, rig::Vec3(0.0, cfg::kDumpBlockSling, 0.0));
     dumpRope_ = rig_.addPulleyRope(rigBucket_, toRig(bucket_->getCMassLocalPose().transformInv(cfg::kArch)),
-                                   rigDumpBlock_, rig::Vec3::Zero(), rigSocket_, toRig(cfg::kSocketDumpEye));
+                                   rigDumpBlock_, rig::Vec3::Zero(), rigSocket_, toRig(cfg::kSocketDumpEye),
+                                   cfg::kDumpSheaveRadius, rig::Vec3::UnitX(), rigYoke_); // sheave pin across the yoke
 }
 
 void Dragline::solveDirect(float dt)
@@ -864,19 +866,31 @@ float Dragline::dragTension() const
     return hasDrag() ? static_cast<float>(-rig_.ropeImpulse(dragRope_) / lastH_) : 0.0f;
 }
 
-void Dragline::dumpEnds(PxVec3& arch, PxVec3& sheave, PxVec3& socketEye) const
+Dragline::DumpPath Dragline::dumpPath() const
 {
-    arch      = bucket_->getGlobalPose().transform(cfg::kArch);
-    sheave    = hasDrag() ? dumpBlockPose().p : arch;
-    socketEye = hasDrag() ? socketPose().transform(cfg::kSocketDumpEye) : arch;
+    DumpPath p;
+    p.arch = p.archRim = p.sheave = p.eyeRim = p.socketEye = bucket_->getGlobalPose().transform(cfg::kArch);
+    if (!hasDrag()) return p;
+    const PxTransform block = dumpBlockPose();
+    p.sheave    = block.p;
+    p.socketEye = socketPose().transform(cfg::kSocketDumpEye);
+    const rig::SheavePath s = rig::sheavePath(toRig(p.arch), toRig(p.sheave), toRig(p.socketEye), cfg::kDumpSheaveRadius,
+                                              rig_.pulleyAxis(dumpRope_), rig_.pulleySense(dumpRope_));
+    if (s.valid)
+    {
+        p.archRim = toPx(s.ta);
+        p.eyeRim  = toPx(s.tb);
+        p.length  = static_cast<float>(s.length);
+    }
+    else // an end inside the rim: slack, show it as straight lines
+        p.length = (p.arch - p.sheave).magnitude() + (p.socketEye - p.sheave).magnitude();
+    return p;
 }
 
 bool Dragline::dumpRopeTaut() const
 {
     if (!hasDrag()) return false;
-    PxVec3 arch, sheave, eye;
-    dumpEnds(arch, sheave, eye);
-    return (arch - sheave).magnitude() + (eye - sheave).magnitude() >= dumpLength_ - cfg::kTautBand;
+    return dumpPath().length >= dumpLength_ - cfg::kTautBand;
 }
 
 float Dragline::dumpTension() const

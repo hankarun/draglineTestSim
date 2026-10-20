@@ -282,9 +282,7 @@ int main(int argc, char** argv)
 
         if (d.hasDrag()) // dump rope: one rope over the block, so arch->block + block->socket must stay <= its length
         {
-            PxVec3 arch, sheave, eye;
-            d.dumpEnds(arch, sheave, eye);
-            const float excess = (arch - sheave).magnitude() + (eye - sheave).magnitude() - d.dumpRopeLength();
+            const float excess = d.dumpPath().length - d.dumpRopeLength();
             dumpExcessMin = std::fmin(dumpExcessMin, excess);
             dumpExcessMax = std::fmax(dumpExcessMax, excess);
         }

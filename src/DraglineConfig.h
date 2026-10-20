@@ -121,13 +121,14 @@ constexpr float kDragSocketEyeHalfW = 0.25f;  // chain eyes on the socket side f
 // Dump rope: fixed length, bucket arch -> over the dump block -> socket top. Taut while the drag rope pulls
 // the socket away: holds the mouth up; paying the drag rope out lets the bucket tip mouth-down (dump) and
 // the dump rope lifts the socket toward the block.
-// Dump block: own body (frictionless sheave at its centre) hanging from the yoke on a rigid sling with a
-// ball joint, so the dump rope swings it forward over the arch and the socket. (A sheave fixed on the
-// yoke left the socket hanging off a long, steep rope segment: on release it swung in sideways.)
-// Pinned up at the hoist socket (yoke top), a little in front of the hoist rope because of the yoke: a block
-// hung below the yoke put the sheave so low that the socket hung down into the dumped bucket.
-inline const PxVec3 kDumpBlockHang(0.0f, 0.2f, -0.4f); // yoke-local sling pin: top, in front of the yoke (-Z = machine side)
-constexpr float     kDumpBlockSling = 0.25f;           // m, sling pin -> block centre
+// Dump block: a sheave (Dragline-Rigging-Diagram.png) whose two falls leave the rim kDumpSheaveRadius either
+// side of its centre, not one point. It sits on the yoke at the hoist socket (yoke top), rim against the hoist
+// rope on the machine side; no arm in between. Own body on a very short ball-jointed pin (frictionless: free to
+// turn); the sheave axis is the yoke's. (Hung lower, below the yoke, the socket dropped into the dumped bucket.)
+constexpr float     kDumpSheaveRadius = 0.3f;  // m
+inline const PxVec3 kDumpBlockSheave(0.0f, kYokeHalf.y, -kDumpSheaveRadius); // yoke-local centre (-Z = machine side)
+constexpr float     kDumpBlockSling = 0.05f; // m, pin -> sheave centre
+inline const PxVec3 kDumpBlockHang = kDumpBlockSheave + PxVec3(0.0f, kDumpBlockSling, 0.0f); // yoke-local ball pin
 constexpr float     kDumpBlockMass  = 150.0f;
 inline const PxVec3 kDumpBlockHalf(0.12f, 0.18f, 0.08f);
 inline const PxVec3 kSocketDumpEye(0.0f, 0.15f, 0.0f); // socket-local: top face centre
@@ -144,6 +145,7 @@ constexpr float kSettleCarryTime  = 3.5f;  // s of the settle the servo runs; th
 
 // --- bucket (bucket-local: origin at the trunnion axis, -Z = mouth, toward the machine) ---
 constexpr float  kBucketMass = 3000.0f;
+inline const PxVec3 kBucketComShift(0.0f, 0.0f, -0.8f); // added to the COM of the shell shapes (cast lip + teeth are heavy)
 inline const PxVec3 kHoistPin(0.8231f, -0.0235f, -0.0036f); // [xml] Dragline.Rig.HoistChainAttach{HalfW,Y,Z}M (+-X)
 constexpr float  kSpreaderAboveBucket = 1.879f;             // [xml] Dragline.Rig.SpreaderBarMeshLocalYM
 constexpr float  kLowerChainLen       = kSpreaderAboveBucket + 0.0235f; // spreader end -> pin, plumb

@@ -78,6 +78,21 @@ struct Params
     uint32_t groundGroup   = 1;     // ground plane y = 0
 };
 
+// Rope from pa over a frictionless sheave (centre ps, radius r, axis world) to pb, in the plane normal to the
+// axis: both ends leave the rim on tangents. The rope wraps the sheave in a fixed sense (+-1 about the axis), so
+// when the ends swing past each other the falls cross below the sheave instead of jumping to the other side;
+// sense 0 picks the side away from both ends (result.sense). The length's gradient w.r.t. pa / pb is the unit
+// tangent ua / ub (rim point -> end), w.r.t. ps -(ua + ub).
+struct SheavePath
+{
+    Real length = 0.0;
+    Vec3 ta = Vec3::Zero(), tb = Vec3::Zero(); // rim tangent points
+    Vec3 ua = Vec3::Zero(), ub = Vec3::Zero();
+    int  sense = 0;
+    bool valid = false; // false: an end within 1 cm of the rim (no tangent), the rope is slack anyway
+};
+SheavePath sheavePath(const Vec3& pa, const Vec3& ps, const Vec3& pb, Real radius, const Vec3& axis, int sense);
+
 class Solver
 {
 public:
@@ -87,11 +102,20 @@ public:
     int  addBody(const Body& body);
     void addBall(int a, const Vec3& anchorA, int b, const Vec3& anchorB); // anchors in body frames
     int  addRope(int a, const Vec3& anchorA, int b, const Vec3& anchorB); // returns the rope index
-    // rope from a over a frictionless sheave point on s to b (spec 4.4): length = |pa - ps| + |pb - ps|
-    int  addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB);
+    // rope from a over a frictionless sheave on s to b (spec 4.4): sheave centre in s's frame, its axis in
+    // axisBody's frame (-1 = s; the body the sheave pin is fixed in), radius 0 = a point
+    // (length |pa - ps| + |pb - ps|), else tangents + wrap (sheavePath)
+    int  addPulleyRope(int a, const Vec3& anchorA, int s, const Vec3& sheave, int b, const Vec3& anchorB,
+                       Real radius = 0.0, const Vec3& axis = Vec3::UnitX(), int axisBody = -1);
+    Vec3 pulleyAxis(int rope) const; // world
+    int  pulleySense(int rope) const { return ropes_[rope].sense; } // 0 until the first step after a reset
     // paid-out length, its rate (rope can only pull), axial stiffness and damping
     void setRopeState(int rope, Real length, Real lengthRate, Real stiffness, Real damping);
-    void clearWarmStart() { warm_.clear(); }
+    void clearWarmStart() // also re-picks each pulley's wrap sense on the next step
+    {
+        warm_.clear();
+        for (Rope& r : ropes_) r.sense = 0;
+    }
 
     bool step(Real h); // false if the factorization failed (free velocities applied, nothing else)
 
@@ -114,6 +138,10 @@ private:
     {
         int  a = -1, b = -1, s = -1; // s >= 0: runs over a sheave on body s
         Vec3 pa = Vec3::Zero(), pb = Vec3::Zero(), ps = Vec3::Zero();
+        Real radius = 0.0;              // sheave
+        Vec3 axis   = Vec3::UnitX();    // sheave axis, axisBody's frame
+        int  axisBody = -1;
+        int  sense    = 0;              // wrap sense, fixed on the first step
         Real length = 1.0, rate = 0.0, k = 1.0, d = 0.0;
         Real lambda = 0.0; // last step's impulse, also its warm start
     };
