@@ -15,6 +15,26 @@ using physx::PxVec3;
 
 constexpr float kGravity  = 9.81f;
 constexpr int   kSubSteps = 4; // physics substeps per frame step: the rig is a stiff chain of light/heavy bodies
+// How the direct rig solver is coupled to PhysX.
+// PerSubstep: PhysX steps kSubSteps times per frame, one rig solve before each (the original bench).
+// SubCycle:   PhysX steps once per frame (1/60 s, like the Konvoy main sim); the rig solver runs kSubSteps
+//             times inside that one step, carrying the bucket proxy along, and the summed rig impulse goes
+//             to PhysX once. The maximal and articulation models always use PerSubstep.
+enum class Coupling { PerSubstep, SubCycle };
+constexpr Coupling kDefaultCoupling = Coupling::SubCycle;
+// Optional SubCycle fixes, both OFF: they were written against "the lagged prediction carries the bucket through
+// the ground on the landing frame", but the measured worst chain-end gaps (ff 0.17, ground 0.12, drag 0.17 m)
+// come from hard rig impacts in the air (bucket hitting the chains/socket, chains snapping taut at free-fall
+// start): the rig impulse arrives mid-frame in the sub-cycles but PhysX gets it at the start of its one step, so
+// the PhysX bucket ends up to ~v*dt away from the proxy for one frame. The next frame re-syncs.
+// - mirrored ground: the bucket proxy gets its own ground contact in the rig solve (probe spheres at the
+//   shell box corners), never sent to PhysX; its free velocity is then gravity + damping only, not the lagged
+//   acceleration (that already holds the ground force: it would count twice)
+// - joint bias cap: a gap that is left still closes at most this fast (m/s, 0 = off)
+constexpr bool  kMirrorBucketGround      = false; // measured 2026-10-21: no gain, ff/drag gap 0.17 -> 0.20 m
+constexpr float kJointMaxBiasVel         = 0.0f;  // measured 2026-10-21: no gain, with mirror 0.51 m
+constexpr float kBucketGroundProbeRadius = 0.03f; // m
+constexpr int   kBucketGroundContacts    = 4;     // deepest probes kept
 constexpr physx::PxU32 kSolverPosIters = 8; // per substep; TGS needs far fewer than PGS
 constexpr physx::PxU32 kSolverVelIters = 1;
 constexpr float kRigAngularDamping = 1.5f;  // rig bodies: friction in pins and chain links (real rigs stop swinging)

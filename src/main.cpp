@@ -91,8 +91,16 @@ int main(int argc, char** argv)
                           : model == cfg::ChainModel::Articulation ? "articulation (PhysX)"
                                                                     : "direct (own LDLT solver)";
 
+    // optional coupling, any argument: persub (PhysX stepped with every rig substep) | subcycle (one PhysX step per frame)
+    cfg::Coupling coupling = cfg::kDefaultCoupling;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "persub") == 0) coupling = cfg::Coupling::PerSubstep;
+        if (std::strcmp(argv[i], "subcycle") == 0) coupling = cfg::Coupling::SubCycle;
+    }
+
     Dragline dragline;
-    if (!dragline.init(model))
+    if (!dragline.init(model, coupling))
     {
         std::fprintf(stderr, "PhysX initialization failed\n");
         dragline.shutdown();

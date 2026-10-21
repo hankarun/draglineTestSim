@@ -19,6 +19,7 @@ struct Contact
     Vec3     n;     // from b toward a
     Real     sep;   // signed separation, < 0 = penetrating
     uint64_t key;
+    bool     mirror = false; // proxy-ground contact (Body::mirrorGround)
 };
 
 // stable id of one contact feature (sphere of a against box of b, or the ground), times 4 for its 3 rows
@@ -134,9 +135,9 @@ void Solver::buildContacts(Real h)
 {
     const Params& P = params;
     std::vector<Contact> found, pair;
-    auto keepDeepest = [&]() {
+    auto keepDeepest = [&](int keep) {
         std::sort(pair.begin(), pair.end(), [](const Contact& x, const Contact& y) { return x.sep < y.sep; });
-        if (static_cast<int>(pair.size()) > P.maxContactsPerPair) pair.resize(P.maxContactsPerPair);
+        if (static_cast<int>(pair.size()) > keep) pair.resize(keep);
         found.insert(found.end(), pair.begin(), pair.end());
         pair.clear();
     };
@@ -165,10 +166,11 @@ void Solver::buildContacts(Real h)
                 const Real  sep = c.y() - r;
                 if (sep < P.margin)
                     pair.push_back({a, -1, c - Vec3(0.0, r, 0.0), Vec3(c.x(), 0.0, c.z()), Vec3::UnitY(), sep,
-                                    featureKey(a, static_cast<int>(i), -1, 0)});
+                                    featureKey(a, static_cast<int>(i), -1, 0), A.mirrorGround});
             }
-            keepDeepest();
+            keepDeepest(A.mirrorGround && A.maxGroundContacts > 0 ? A.maxGroundContacts : P.maxContactsPerPair);
         }
+        if (A.mirrorGround) continue; // its spheres are ground probes only
 
         for (int b = 0; b < n; ++b)
         {
@@ -225,7 +227,7 @@ void Solver::buildContacts(Real h)
                                     featureKey(a, static_cast<int>(i), b, static_cast<int>(k))});
                 }
             }
-            keepDeepest();
+            keepDeepest(P.maxContactsPerPair);
         }
     }
 
@@ -247,6 +249,7 @@ void Solver::buildContacts(Real h)
         nr.hi     = kInf;
         nr.key    = c.key;
         nr.lambda = warm(nr.key);
+        nr.report = !c.mirror;
         rowsC_.push_back(nr);
 
         Vec3 t[2];
@@ -261,6 +264,7 @@ void Solver::buildContacts(Real h)
             tr.hi     = P.friction; // times |normal impulse| in the LCP
             tr.key    = c.key + 1 + static_cast<uint64_t>(k);
             tr.lambda = warm(tr.key);
+            tr.report = !c.mirror;
             rowsC_.push_back(tr);
         }
     }
@@ -317,7 +321,10 @@ bool Solver::step(Real h)
     {
         const Vec3 pa  = worldPoint(j.a, j.pa);
         const Vec3 pb  = worldPoint(j.b, j.pb);
-        const Vec3 phi = pa - pb;
+        Vec3       phi = pa - pb;
+        // capped drift correction: a big gap (left by a lagged bucket prediction) closes at most this fast
+        const Real gap = phi.norm();
+        if (P.maxBiasVelocity > 0.0 && P.beta * gap / h > P.maxBiasVelocity) phi *= P.maxBiasVelocity * h / (P.beta * gap);
         for (int k = 0; k < 3; ++k)
         {
             Row r;
@@ -463,9 +470,18 @@ bool Solver::step(Real h)
     }
 
     // 5. velocity update u+ = u* + W J^T lambda, then integrate the dynamic bodies
+    // impulse_ (what bodyImpulse reports) leaves the mirrored contacts out; the velocity update uses all rows
     impulse_ = JB.transpose() * lamB;
-    if (mC > 0) impulse_ += JC.transpose() * lamC;
-    const Eigen::VectorXd du = W * impulse_;
+    Eigen::VectorXd total = impulse_;
+    if (mC > 0)
+    {
+        Eigen::VectorXd lamReport = lamC;
+        for (int i = 0; i < mC; ++i)
+            if (!rowsC_[i].report) lamReport[i] = 0.0;
+        impulse_ += JC.transpose() * lamReport;
+        total += JC.transpose() * lamC;
+    }
+    const Eigen::VectorXd du = W * total;
     for (int i = 0; i < n; ++i)
     {
         if (col_[i] < 0) continue;

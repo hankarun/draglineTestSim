@@ -26,8 +26,18 @@ class Dragline
 public:
     enum Chain { UpperL, UpperR, LowerL, LowerR, DragL, DragR, ChainCount }; // drag chains: direct model only
 
-    bool init(cfg::ChainModel model = cfg::kDefaultChainModel);
+    bool init(cfg::ChainModel model = cfg::kDefaultChainModel, cfg::Coupling coupling = cfg::kDefaultCoupling);
     cfg::ChainModel chainModel() const { return model_; }
+    cfg::Coupling   coupling() const { return coupling_; }
+    // SubCycle landing fixes (cfg::kMirrorBucketGround, cfg::kJointMaxBiasVel); set before init()
+    struct DirectOptions
+    {
+        bool  mirrorGround    = cfg::kMirrorBucketGround;
+        float jointMaxBiasVel = cfg::kJointMaxBiasVel;
+    };
+    void                 setDirectOptions(const DirectOptions& o) { options_ = o; }
+    const DirectOptions& directOptions() const { return options_; }
+    bool                 mirrorsGround() const { return coupling_ == cfg::Coupling::SubCycle && options_.mirrorGround; }
     void shutdown();
     void reset();
     void step(const DraglineControls& controls, float dt);
@@ -136,6 +146,9 @@ private:
     void placeChain(ChainRig& chain);
     void setHoistLength(float length); // rope length + its length-dependent stiffness
     void subStep(const DraglineControls& controls, float dt);
+    void driveStep(const DraglineControls& controls, float dt);       // swing + both drums
+    void setRopeStates(float dt);                                     // drum payouts -> solver ropes
+    void frameStepDirect(const DraglineControls& controls, float dt); // Coupling::SubCycle
     void settleDirect(); // direct model with a drag side: run the placed rig to rest
     float rigMass() const;
     float dragMass() const; // drag chains + socket, 0 without a drag side
@@ -154,6 +167,8 @@ private:
 
     physx::PxRigidDynamic*  house_     = nullptr;
     cfg::ChainModel model_ = cfg::kDefaultChainModel;
+    cfg::Coupling   coupling_ = cfg::kDefaultCoupling;
+    DirectOptions   options_;
 
     physx::PxRigidBody*     yoke_     = nullptr;
     physx::PxRigidBody*     spreader_  = nullptr;

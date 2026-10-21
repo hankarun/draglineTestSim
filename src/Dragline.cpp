@@ -90,9 +90,10 @@ HoistDrumParams Dragline::dragParams()
     return p;
 }
 
-bool Dragline::init(cfg::ChainModel model)
+bool Dragline::init(cfg::ChainModel model, cfg::Coupling coupling)
 {
-    model_ = model;
+    model_    = model;
+    coupling_ = model == cfg::ChainModel::Direct ? coupling : cfg::Coupling::PerSubstep;
 
     foundation_ = PxCreateFoundation(PX_PHYSICS_VERSION, allocator_, errorCallback_);
     if (!foundation_) return false;
@@ -597,6 +598,7 @@ void Dragline::createDirectRig()
     rig_.params.gravity     = rig::Vec3(0.0, -cfg::kGravity, 0.0);
     rig_.params.groundGroup  = cfg::kGroupWorld;
     rig_.params.jointDamping = cfg::kChainJointDamping;
+    rig_.params.maxBiasVelocity = coupling_ == cfg::Coupling::SubCycle ? options_.jointMaxBiasVel : 0.0;
 
     rig::Body bucket;
     bucket.kind        = rig::BodyKind::Proxy;
@@ -612,6 +614,24 @@ void Dragline::createDirectRig()
     {
         const PxTransform local = comInv * PxTransform(part.center);
         bucket.boxes.push_back({toRig(local.p), toRig(local.q), toRig(part.half)});
+    }
+    if (mirrorsGround()) // ground probes at the shell box corners, inset by the probe radius
+    {
+        const double r = cfg::kBucketGroundProbeRadius;
+        bucket.mirrorGround      = true;
+        bucket.maxGroundContacts = cfg::kBucketGroundContacts;
+        bucket.sphereRadius      = r;
+        for (const cfg::BoxPart& part : cfg::kBucketParts)
+            for (const float x : {-1.0f, 1.0f})
+                for (const float y : {-1.0f, 1.0f})
+                    for (const float z : {-1.0f, 1.0f})
+                    {
+                        const PxVec3 inset(std::max(part.half.x - static_cast<float>(r), 0.0f),
+                                           std::max(part.half.y - static_cast<float>(r), 0.0f),
+                                           std::max(part.half.z - static_cast<float>(r), 0.0f));
+                        const PxVec3 corner = part.center + PxVec3(x * inset.x, y * inset.y, z * inset.z);
+                        bucket.spheres.push_back(toRig(comInv.transform(corner)));
+                    }
     }
     rigBucket_ = rig_.addBody(bucket);
 
@@ -663,12 +683,7 @@ void Dragline::solveDirect(float dt)
     house.q          = toRig(house_->getGlobalPose().q); // start of the substep; the kinematic target is its end
     house.w          = rig::Vec3(0.0, swingRate_, 0.0);
 
-    lastH_ = dt;
-    rig_.setRopeState(hoistRope_, drum_.payout(), drum_.speed(), cfg::kRopeEA / std::max(drum_.payout(), 1.0f),
-                      cfg::kRopeDamping);
-    rig_.setRopeState(dragRope_, dragDrum_.payout(), dragDrum_.speed(),
-                      cfg::kRopeEA / std::max(dragDrum_.payout(), 1.0f), cfg::kRopeDamping);
-    rig_.setRopeState(dumpRope_, dumpLength_, 0.0, cfg::kDumpRopeEA / std::max(dumpLength_, 1.0f), cfg::kRopeDamping);
+    setRopeStates(dt);
     if (!rig_.step(dt)) return;
 
     rig::Vec3 p, l;
@@ -677,6 +692,80 @@ void Dragline::solveDirect(float dt)
     bucketDw_ = toPx(proxy.invInertiaWorld() * l);
     bucket_->addForce(toPx(p), PxForceMode::eIMPULSE);
     bucket_->addTorque(toPx(l), PxForceMode::eIMPULSE);
+}
+
+void Dragline::setRopeStates(float dt)
+{
+    lastH_ = dt;
+    rig_.setRopeState(hoistRope_, drum_.payout(), drum_.speed(), cfg::kRopeEA / std::max(drum_.payout(), 1.0f),
+                      cfg::kRopeDamping);
+    rig_.setRopeState(dragRope_, dragDrum_.payout(), dragDrum_.speed(),
+                      cfg::kRopeEA / std::max(dragDrum_.payout(), 1.0f), cfg::kRopeDamping);
+    rig_.setRopeState(dumpRope_, dumpLength_, 0.0, cfg::kDumpRopeEA / std::max(dumpLength_, 1.0f), cfg::kRopeDamping);
+}
+
+// Coupling::SubCycle: one PhysX step per frame, as in the Konvoy main sim. The rig solver runs kSubSteps
+// times inside it. The bucket proxy is carried through the sub-cycles: each adds the lagged non-rig
+// acceleration to its velocity, the solve adds the rig impulse, and its pose is integrated here (the solver
+// does not integrate proxies); PhysX gets the summed rig impulse once, before its single step.
+void Dragline::frameStepDirect(const DraglineControls& c, float dt)
+{
+    const float       h     = dt / static_cast<float>(cfg::kSubSteps);
+    const PxTransform com   = bucket_->getGlobalPose() * bucket_->getCMassLocalPose();
+    rig::Body&        proxy = rig_.bodies[rigBucket_];
+    rig::Body&        house = rig_.bodies[rigHouse_];
+    bucketV0_               = bucket_->getLinearVelocity();
+    bucketW0_               = bucket_->getAngularVelocity();
+    proxy.x                 = toRig(com.p);
+    proxy.q                 = toRig(com.q);
+    proxy.v                 = toRig(bucketV0_);
+    proxy.w                 = toRig(bucketW0_);
+    proxy.invMass           = bucket_->getInvMass();
+    proxy.invInertia        = toRig(bucket_->getMassSpaceInvInertiaTensor());
+    const rig::Mat3 invI0   = proxy.invInertiaWorld(); // what PhysX applies the summed angular impulse with
+
+    rig::Vec3 sumP = rig::Vec3::Zero(), sumL = rig::Vec3::Zero();
+    for (int i = 0; i < cfg::kSubSteps; ++i)
+    {
+        const float angle0 = swingAngle_; // house at the start of this sub-cycle
+        driveStep(c, h);
+        house.q = toRig(PxQuat(angle0, PxVec3(0.0f, 1.0f, 0.0f)));
+        house.w = rig::Vec3(0.0, swingRate_, 0.0);
+
+        if (mirrorsGround()) // the rig solve has the ground: gravity + PhysX's damping only
+        {
+            proxy.v += rig_.params.gravity * h;
+            proxy.v *= std::max(0.0, 1.0 - h * bucket_->getLinearDamping());
+            proxy.w *= std::max(0.0, 1.0 - h * bucket_->getAngularDamping());
+        }
+        else
+        {
+            proxy.v += toRig(bucketAccel_ * h);
+            proxy.w += toRig(bucketAngAccel_ * h);
+        }
+        setRopeStates(h);
+        if (!rig_.step(h)) break;
+
+        rig::Vec3 p, l; // the solve already added these to proxy.v / proxy.w
+        rig_.bodyImpulse(rigBucket_, p, l);
+        sumP += p;
+        sumL += l;
+
+        proxy.x += h * proxy.v;
+        rig::Quat dq(0.0, proxy.w.x(), proxy.w.y(), proxy.w.z());
+        dq.coeffs() = 0.5 * h * (dq * proxy.q).coeffs();
+        proxy.q.coeffs() += dq.coeffs();
+        proxy.q.normalize();
+    }
+
+    bucketDv_ = toPx(sumP) * bucket_->getInvMass();
+    bucketDw_ = toPx(invI0 * sumL);
+    bucket_->addForce(toPx(sumP), PxForceMode::eIMPULSE);
+    bucket_->addTorque(toPx(sumL), PxForceMode::eIMPULSE);
+    house_->setKinematicTarget(housePose());
+    scene_->simulate(dt);
+    scene_->fetchResults(true);
+    afterDirect(dt);
 }
 
 void Dragline::afterDirect(float dt)
@@ -710,6 +799,11 @@ void Dragline::reset()
 
 void Dragline::step(const DraglineControls& c, float dt)
 {
+    if (coupling_ == cfg::Coupling::SubCycle)
+    {
+        frameStepDirect(c, dt);
+        return;
+    }
     const float h = dt / static_cast<float>(cfg::kSubSteps);
     for (int i = 0; i < cfg::kSubSteps; ++i) subStep(c, h);
 }
@@ -728,10 +822,9 @@ void Dragline::settleDirect()
     bucket_->setAngularDamping(cfg::kSettleAngDamping);
 
     const DraglineControls hold; // drums on their holding brakes
-    const float            h = cfg::kSettleDt / static_cast<float>(cfg::kSubSteps);
     for (float t = 0.0f; t < cfg::kSettleTime; t += cfg::kSettleDt)
     {
-        for (int i = 0; i < cfg::kSubSteps; ++i) subStep(hold, h);
+        step(hold, cfg::kSettleDt);
         // hold the carry attitude like an operator would: reel the drag rope in until the drag chains
         // pull the dump rope tight enough for the carry pitch (paying out lowers the mouth)
         if (t >= cfg::kSettleCarryTime) continue;
@@ -751,6 +844,16 @@ void Dragline::settleDirect()
 }
 
 void Dragline::subStep(const DraglineControls& c, float dt)
+{
+    driveStep(c, dt);
+    if (model_ == cfg::ChainModel::Direct) solveDirect(dt);
+    house_->setKinematicTarget(housePose());
+    scene_->simulate(dt);
+    scene_->fetchResults(true);
+    if (model_ == cfg::ChainModel::Direct) afterDirect(dt);
+}
+
+void Dragline::driveStep(const DraglineControls& c, float dt)
 {
     // swing drive: rate ramps toward the commanded rate, limited by swing acceleration
     const float targetRate = std::clamp(c.swing, -1.0f, 1.0f) * swingMaxRate_;
@@ -780,12 +883,6 @@ void Dragline::subStep(const DraglineControls& c, float dt)
     HoistDrumInput drag = c.drag;
     drag.freeFall       = false;
     dragDrum_.step(drag, dragTension(), 0.0f, dt);
-
-    if (model_ == cfg::ChainModel::Direct) solveDirect(dt);
-    house_->setKinematicTarget(housePose());
-    scene_->simulate(dt);
-    scene_->fetchResults(true);
-    if (model_ == cfg::ChainModel::Direct) afterDirect(dt);
 }
 
 PxTransform Dragline::housePose() const

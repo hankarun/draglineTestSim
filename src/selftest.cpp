@@ -1,6 +1,7 @@
 // Headless rig check: hang -> (free fall | powered lowering) -> hoist -> swing.
-// Usage: dragline_selftest [ff|lower|hang|ground|drag|carry|dump] [max|art|direct] (default ff, cfg::kDefaultChainModel).
-//        dragline_selftest replay <recording.txt>: replays a recording saved in the app ([F9]).
+// Usage: dragline_selftest [ff|lower|hang|ground|drag|carry|dump] [max|art|direct] [persub|subcycle]
+//        (default ff, cfg::kDefaultChainModel, cfg::kDefaultCoupling).
+//        dragline_selftest replay <recording.txt> [persub|subcycle]: replays a recording saved in the app ([F9]).
 // Exit code 1 if the rig blows up.
 // hang   = no input at all for the whole run: the rig should stay put.
 // ground = swing, free fall to the ground, hoist until the chains carry load with the bucket
@@ -17,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 using namespace physx;
@@ -47,6 +49,39 @@ bool inCavity(const PxTransform& bucket, const PxVec3& p)
            l.z > -2.2f && l.z < 0.8f;
 }
 
+// any argument "persub" (PhysX stepped with every rig substep) or "subcycle" (one PhysX step per frame)
+cfg::Coupling parseCoupling(int argc, char** argv)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "persub") == 0) return cfg::Coupling::PerSubstep;
+        if (std::strcmp(argv[i], "subcycle") == 0) return cfg::Coupling::SubCycle;
+    }
+    return cfg::kDefaultCoupling;
+}
+
+const char* couplingName(cfg::Coupling c) { return c == cfg::Coupling::SubCycle ? "subcycle" : "persub"; }
+
+// subcycle landing fixes: any argument "nomirror", "nocap" or "cap=<m/s>"
+Dragline::DirectOptions parseOptions(int argc, char** argv)
+{
+    Dragline::DirectOptions o;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "nomirror") == 0) o.mirrorGround = false;
+        if (std::strcmp(argv[i], "nocap") == 0) o.jointMaxBiasVel = 0.0f;
+        if (std::strncmp(argv[i], "cap=", 4) == 0) o.jointMaxBiasVel = static_cast<float>(std::atof(argv[i] + 4));
+    }
+    return o;
+}
+
+void printOptions(const Dragline& d)
+{
+    if (d.coupling() == cfg::Coupling::SubCycle)
+        std::printf("subcycle: mirrored bucket ground %s, joint bias cap %.2f m/s\n", d.mirrorsGround() ? "on" : "off",
+                    d.directOptions().jointMaxBiasVel);
+}
+
 // drag chain links lying in the bucket cavity right now
 int dragLinksInCavity(const Dragline& d)
 {
@@ -60,7 +95,7 @@ int dragLinksInCavity(const Dragline& d)
 
 // Replays an app recording (rec::save) step by step, then prints the final state in the same format as
 // the file's "state at save" block, so the two can be diffed.
-int replay(const char* path)
+int replay(const char* path, cfg::Coupling coupling, const Dragline::DirectOptions& options)
 {
     rec::Recording r;
     if (!rec::load(path, r))
@@ -69,13 +104,15 @@ int replay(const char* path)
         return 1;
     }
     Dragline d;
-    if (!d.init(r.model))
+    d.setDirectOptions(options);
+    if (!d.init(r.model, coupling))
     {
         std::fprintf(stderr, "PhysX initialization failed\n");
         return 1;
     }
-    std::printf("replay: %s, %zu steps (%.1f s), chains: %s\n", path, r.steps.size(), r.steps.size() * r.dt,
-                rec::modelName(r.model));
+    std::printf("replay: %s, %zu steps (%.1f s), chains: %s, coupling: %s\n", path, r.steps.size(),
+                r.steps.size() * r.dt, rec::modelName(r.model), couplingName(d.coupling()));
+    printOptions(d);
     bool blewUp = false;
     for (size_t i = 0; i < r.steps.size(); ++i)
     {
@@ -113,7 +150,7 @@ int replay(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 2 && std::strcmp(argv[1], "replay") == 0) return replay(argv[2]);
+    if (argc > 2 && std::strcmp(argv[1], "replay") == 0) return replay(argv[2], parseCoupling(argc, argv), parseOptions(argc, argv));
 
     const bool lower = argc > 1 && std::strcmp(argv[1], "lower") == 0;
     const bool hang  = argc > 1 && std::strcmp(argv[1], "hang") == 0;
@@ -146,9 +183,12 @@ int main(int argc, char** argv)
                           : model == cfg::ChainModel::Articulation ? "articulation"
                                                                     : "direct";
     float      maxEndGap = 0.0f; // worst chain-end joint separation (loop closures in the articulation model)
+    float      maxGapTime = 0.0f;
+    int        maxGapAt   = 0; // chain * 2 + end (0 = eye A, 1 = eye B)
 
     Dragline d;
-    if (!d.init(model))
+    d.setDirectOptions(parseOptions(argc, argv));
+    if (!d.init(model, parseCoupling(argc, argv)))
     {
         std::fprintf(stderr, "PhysX initialization failed\n");
         return 1;
@@ -157,10 +197,11 @@ int main(int argc, char** argv)
     bool  blewUp      = false;
     int   penetrating = 0;
     float maxSpeed    = 0.0f;
-    std::printf("scenario: %s, chains: %s\n",
+    std::printf("scenario: %s, chains: %s, coupling: %s\n",
                 hang ? "hang still" : lower ? "powered lowering" : ground ? "ground" : drag ? "drag"
                 : carry ? "carry" : dump ? "dump" : "free fall",
-                modelName);
+                modelName, couplingName(d.coupling()));
+    printOptions(d);
     if ((drag || carry || dump) && !d.hasDrag())
     {
         std::fprintf(stderr, "the drag, carry and dump scenarios need the direct model (no drag side built)\n");
@@ -322,8 +363,14 @@ int main(int argc, char** argv)
             const PxVec3 half(0.5f * d.chainLinkLength(chain), 0.0f, 0.0f);
             PxVec3 eyeA, eyeB;
             d.chainEnds(chain, eyeA, eyeB);
-            maxEndGap = std::fmax(maxEndGap, (d.chainLinkPose(chain, 0).transform(-half) - eyeA).magnitude());
-            maxEndGap = std::fmax(maxEndGap, (d.chainLinkPose(chain, n - 1).transform(half) - eyeB).magnitude());
+            const float gapA = (d.chainLinkPose(chain, 0).transform(-half) - eyeA).magnitude();
+            const float gapB = (d.chainLinkPose(chain, n - 1).transform(half) - eyeB).magnitude();
+            if (std::fmax(gapA, gapB) > maxEndGap)
+            {
+                maxEndGap  = std::fmax(gapA, gapB);
+                maxGapTime = t;
+                maxGapAt   = ch * 2 + (gapB > gapA ? 1 : 0);
+            }
         }
         for (int ch = 0; ch < Dragline::ChainCount; ++ch)
             for (int l = 0; l < d.chainLinkCount(static_cast<Dragline::Chain>(ch)); ++l)
@@ -379,7 +426,9 @@ int main(int argc, char** argv)
     std::printf("perf  %.2f ms per 1/60 s step (worst %.2f) -> %.1fx realtime\n", stepMs / steps, worstMs,
                 16.667 / (stepMs / steps));
     std::printf("sway  yoke fore/aft travel with no input: %.3f m\n", swayMax - swayMin);
-    std::printf("gap   worst chain-end joint separation: %.4f m\n", maxEndGap);
+    static const char* const kChainNames[] = {"upper L", "upper R", "lower L", "lower R", "drag L", "drag R"};
+    std::printf("gap   worst chain-end joint separation: %.4f m (t=%.2f, %s, %s end)\n", maxEndGap, maxGapTime,
+                kChainNames[maxGapAt / 2], maxGapAt % 2 ? "B" : "A");
     if (drag)
         std::printf("drag  bucket moved %.2f m toward the machine; taut-chain drag tension mean %.1f kN, max %.1f kN "
                     "(mu 0.5 x bucket weight = %.1f kN)\n",

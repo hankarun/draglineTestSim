@@ -52,6 +52,10 @@ struct Body
     std::vector<Vec3> spheres;
     Real              sphereRadius = 0.0;
     std::vector<Box>  boxes;
+    // Mirrored ground contact (a proxy whose ground contact PhysX also solves): the spheres touch the ground
+    // only, take part in the solve, but their impulses are left out of bodyImpulse (never sent to PhysX)
+    bool mirrorGround      = false;
+    int  maxGroundContacts = 0; // deepest ground contacts kept for this body, 0 = params.maxContactsPerPair
 
     Mat3 invInertiaWorld() const
     {
@@ -65,6 +69,7 @@ struct Params
 {
     Vec3     gravity{0.0, -9.81, 0.0};
     Real     beta          = 0.3;   // Baumgarte factor of rigid rows
+    Real     maxBiasVelocity = 0.0; // m/s, cap on a ball joint's drift-correction speed (0 = no cap)
     Real     jointDamping  = 0.0;   // N m s/rad, relative rotation at every ball joint (link-to-link friction)
     Real     eps           = 1e-9;  // rigid-row regularization (x 1/h^2)
     Real     contactBeta   = 0.3;
@@ -155,6 +160,7 @@ private:
         int      findex = -1;  // friction row: index of its normal row (within the same block)
         uint64_t key    = 0;   // contact feature id for warm starting
         Real     lambda = 0.0;
+        bool     report = true; // false: mirrored contact, left out of bodyImpulse
     };
 
     // row along n through world point p on a and q on b (b < 0: static world): rel. velocity (a - b) . n
